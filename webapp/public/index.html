@@ -1,0 +1,616 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#231F1B" />
+  <title>Pianissimo · Tournées Harpe</title>
+  <link rel="icon" href="./icons/harp.svg" type="image/svg+xml" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" crossorigin="" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" crossorigin="" />
+  <link rel="stylesheet" href="./css/app.css" />
+</head>
+<body>
+  <!-- Écran d'authentification par code équipe -->
+  <section id="auth-gate" class="auth-gate" aria-label="Connexion équipe Pianissimo">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <img src="./icons/harp.svg" alt="" width="48" height="48" />
+        <div>
+          <h1>Pianissimo</h1>
+          <p class="auth-sub">Organisation des tournées harpe · Anthony &amp; Marie</p>
+        </div>
+      </div>
+      <form id="auth-form" class="auth-form">
+        <label for="auth-code-input">Code d'accès équipe</label>
+        <input id="auth-code-input" name="code" type="password" autocomplete="current-password" placeholder="Saisir le code équipe" required />
+        <p id="auth-error" class="auth-error" role="alert" hidden></p>
+        <button type="submit" id="auth-submit-btn" class="btn btn-primary btn-block">Ouvrir l'atelier tournées</button>
+      </form>
+      <p class="auth-hint">Accès chiffré · Synchronisation temps réel Supabase · Zéro donnée publique</p>
+    </div>
+  </section>
+
+  <!-- Application principale -->
+  <div id="app-shell" class="app-shell" hidden>
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="brand-lockup">
+          <img src="./icons/harp.svg" alt="" width="34" height="34" />
+          <div>
+            <span class="brand-title">Pianissimo</span>
+            <span class="brand-tag">Tournées Harpe</span>
+          </div>
+        </div>
+
+        <div class="tour-picker">
+          <label for="tour-select" class="sr-only">Tournée sélectionnée</label>
+          <select id="tour-select" class="select-tour"></select>
+          <span id="tour-dates-badge" class="badge badge-neutral"></span>
+          <span id="tour-status-badge" class="badge"></span>
+          <button type="button" id="btn-new-tour" class="btn btn-ghost btn-sm" title="Créer une nouvelle tournée">+ Tournée</button>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <div class="bareme-pill" title="Barème tournée par instrument">
+          <span>Concert <strong>320€ · 3h</strong></span>
+          <span>Étude <strong>280€ · 3h</strong></span>
+          <span>Celtique <strong>150€ · 1h30</strong></span>
+        </div>
+        <span id="realtime-pill" class="realtime-pill" title="Synchronisation temps réel">● En direct</span>
+        <button type="button" id="btn-logout" class="btn btn-ghost btn-sm">Déconnexion</button>
+      </div>
+    </header>
+
+    <!-- Navigation par onglets (Pattern modern-web-guidance: focusgroup + hidden=until-found) -->
+    <nav class="tabs-bar" aria-label="Modules de la tournée">
+      <div class="tablist" focusgroup="tablist nomemory" aria-label="Vues principales">
+        <button type="button" role="tab" id="tab-demandes" aria-selected="true" focusgroupstart data-panel="panel-demandes">
+          Demandes &amp; Carte
+          <span id="badge-tab-demandes" class="tab-count">0</span>
+        </button>
+        <button type="button" role="tab" id="tab-planning" aria-selected="false" data-panel="panel-planning">
+          Planning &amp; Trajets
+          <span id="badge-tab-planning" class="tab-count">0</span>
+        </button>
+        <button type="button" role="tab" id="tab-messages" aria-selected="false" data-panel="panel-messages">
+          Messages &amp; WhatsApp
+          <span id="badge-tab-messages" class="tab-count">0</span>
+        </button>
+        <button type="button" role="tab" id="tab-finance" aria-selected="false" data-panel="panel-finance">
+          Pilotage &amp; Devis
+        </button>
+      </div>
+    </nav>
+
+    <main class="main-content">
+      <!-- ONGLET 1 : DEMANDES & CARTE -->
+      <section role="tabpanel" id="panel-demandes" aria-labelledby="tab-demandes" tabindex="0">
+        <div class="panel-inner">
+          <!-- KPI Strip -->
+          <div id="kpi-strip" class="kpi-strip"></div>
+
+          <!-- Panneau Anomalies / Points de vigilance -->
+          <details id="anomalies-drawer" class="anomalies-drawer">
+            <summary>
+              <span class="anomalies-summary-title">
+                Points de vigilance &amp; anomalies auditées
+                <span id="anomalies-count-badge" class="badge badge-danger">0</span>
+              </span>
+              <span class="anomalies-summary-hint">Cliquer pour ouvrir / masquer</span>
+            </summary>
+            <div id="anomalies-list" class="anomalies-list"></div>
+          </details>
+
+          <!-- Split Carte + Tableau -->
+          <div class="demandes-grid">
+            <!-- Carte interactive -->
+            <section class="card map-card" aria-label="Carte géographique des demandes">
+              <div class="card-head">
+                <div>
+                  <h2>Carte des harpes par zone</h2>
+                  <p class="card-sub">Pastilles chiffrées par type : Or = Concert · Bleu = Étude · Sauge = Celtique</p>
+                </div>
+                <div class="map-controls">
+                  <div class="segmented" role="group" aria-label="Mode d'affichage carte">
+                    <button type="button" id="btn-map-poles" class="seg-btn is-active" data-mode="poles">Pôles</button>
+                    <button type="button" id="btn-map-clients" class="seg-btn" data-mode="clients">Clients</button>
+                  </div>
+                  <select id="map-day-route" class="select-sm" aria-label="Afficher le trajet d'une journée">
+                    <option value="">Trajet jour : aucun</option>
+                  </select>
+                  <button type="button" id="btn-map-fit" class="btn btn-ghost btn-sm">Toute la zone</button>
+                </div>
+              </div>
+              <div id="harp-map" class="harp-map" aria-label="Carte interactive Leaflet"></div>
+              <div class="map-legend">
+                <span class="legend-item"><i class="dot dot-concert"></i> Concert (3h · 320€)</span>
+                <span class="legend-item"><i class="dot dot-etude"></i> Étude (3h · 280€)</span>
+                <span class="legend-item"><i class="dot dot-celtique"></i> Celtique (1h30 · 150€)</span>
+                <span class="legend-item"><i class="dot dot-inconnu"></i> À préciser</span>
+                <span class="legend-item"><i class="dot dot-conflit"></i> Conflit à recaler</span>
+              </div>
+            </section>
+
+            <!-- Liste des demandes -->
+            <section class="card table-card" aria-label="Totalité des demandes">
+              <div class="card-head">
+                <div>
+                  <h2 id="demandes-table-title">Totalité des demandes</h2>
+                  <p id="demandes-filter-summary" class="card-sub"></p>
+                </div>
+                <div class="table-actions">
+                  <button type="button" id="btn-new-demande" class="btn btn-primary btn-sm">+ Demande</button>
+                </div>
+              </div>
+
+              <div class="filter-bar">
+                <input type="search" id="filter-search" class="input-sm" placeholder="Rechercher client, ville, modèle..." aria-label="Rechercher une demande" />
+                <select id="filter-statut" class="select-sm" aria-label="Filtrer par statut">
+                  <option value="">Tous statuts</option>
+                  <option value="confirme">Confirmé</option>
+                  <option value="conflit">Conflit à recaler</option>
+                  <option value="propose">Proposé</option>
+                  <option value="a_qualifier">À qualifier</option>
+                  <option value="contacte">Contacté</option>
+                  <option value="a_contacter">À contacter</option>
+                  <option value="doublon">Doublon</option>
+                  <option value="annule">Annulé</option>
+                </select>
+                <select id="filter-secteur" class="select-sm" aria-label="Filtrer par secteur">
+                  <option value="">Tous secteurs</option>
+                </select>
+                <select id="filter-type" class="select-sm" aria-label="Filtrer par type de harpe">
+                  <option value="">Toutes harpes</option>
+                  <option value="concert">Concert</option>
+                  <option value="etude">Étude</option>
+                  <option value="celtique">Celtique</option>
+                  <option value="inconnu">Modèle inconnu</option>
+                </select>
+              </div>
+
+              <div tabindex="0" role="region" aria-labelledby="demandes-table-title" class="table-wrapper">
+                <table class="data-table" id="demandes-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Client</th>
+                      <th scope="col">Secteur &amp; Ville</th>
+                      <th scope="col">Harpes</th>
+                      <th scope="col">Durée / €</th>
+                      <th scope="col">Statut</th>
+                      <th scope="col">Créneau</th>
+                      <th scope="col">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="demandes-tbody"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <!-- ONGLET 2 : PLANNING & TRAJETS -->
+      <section role="tabpanel" id="panel-planning" aria-labelledby="tab-planning" hidden="until-found">
+        <div class="panel-inner">
+          <div class="planning-toolbar card">
+            <div class="planning-toolbar-left">
+              <h2>Planning horaire &amp; temps de trajet</h2>
+              <p class="card-sub">Les durées par instrument ne sont jamais rognées · Trajets routiers OSRM avec mise en cache</p>
+            </div>
+            <div class="planning-toolbar-right">
+              <label class="inline-field">
+                <span>Luthiers :</span>
+                <select id="planning-luthiers" class="select-sm">
+                  <option value="1">1 luthier</option>
+                  <option value="2">2 luthiers (Anthony &amp; Marie)</option>
+                </select>
+              </label>
+              <label class="inline-field">
+                <span>Départ journée :</span>
+                <input type="time" id="planning-start-time" class="input-sm" value="08:30" />
+              </label>
+              <button type="button" id="btn-recalc-all-routes" class="btn btn-ghost btn-sm">Recalculer trajets OSRM</button>
+              <button type="button" id="btn-print-planning" class="btn btn-primary btn-sm">Imprimer / PDF A4</button>
+            </div>
+          </div>
+
+          <div id="planning-days-container" class="planning-days"></div>
+        </div>
+      </section>
+
+      <!-- ONGLET 3 : MESSAGES & WHATSAPP -->
+      <section role="tabpanel" id="panel-messages" aria-labelledby="tab-messages" hidden="until-found">
+        <div class="panel-inner">
+          <div class="messages-layout">
+            <!-- Colonne gauche : liste clients -->
+            <aside class="card messages-sidebar" aria-label="Clients à contacter">
+              <div class="sidebar-head">
+                <h2>Clients &amp; suivis</h2>
+                <input type="search" id="msg-search" class="input-sm" placeholder="Filtrer un client..." aria-label="Filtrer la liste clients" />
+                <div class="sidebar-filters">
+                  <select id="msg-filter-statut" class="select-sm" aria-label="Statut client">
+                    <option value="">Tous statuts</option>
+                    <option value="conflit">Conflits en priorité</option>
+                    <option value="propose">En attente retour</option>
+                    <option value="a_qualifier">À qualifier</option>
+                    <option value="confirme">Confirmés</option>
+                  </select>
+                  <select id="msg-filter-canal" class="select-sm" aria-label="Canal">
+                    <option value="">Tous canaux</option>
+                    <option value="WhatsApp">WhatsApp</option>
+                    <option value="Email">Email</option>
+                  </select>
+                </div>
+              </div>
+              <ul id="msg-client-list" class="msg-client-list"></ul>
+            </aside>
+
+            <!-- Colonne droite : historique + composeur -->
+            <section class="card messages-workspace" aria-label="Historique et personnalisation du message">
+              <div id="msg-empty-state" class="empty-state">
+                <p>Sélectionnez un client dans la liste de gauche pour consulter son historique et personnaliser le message à envoyer.</p>
+              </div>
+
+              <div id="msg-active-pane" class="msg-active-pane" hidden>
+                <div class="msg-client-banner">
+                  <div>
+                    <h2 id="msg-client-name"></h2>
+                    <p id="msg-client-meta" class="card-sub"></p>
+                  </div>
+                  <div class="msg-client-badges">
+                    <span id="msg-client-statut" class="badge"></span>
+                    <button type="button" id="btn-msg-open-fiche" class="btn btn-ghost btn-sm">Éditer fiche</button>
+                  </div>
+                </div>
+
+                <div id="msg-client-context" class="msg-context-box"></div>
+
+                <!-- Fil des échanges -->
+                <div class="msg-thread-section">
+                  <div class="section-row">
+                    <h3>Historique des échanges</h3>
+                    <span id="msg-thread-count" class="badge badge-neutral">0</span>
+                  </div>
+                  <div id="msg-thread-list" class="msg-thread-list"></div>
+
+                  <form id="msg-log-form" class="msg-log-form">
+                    <select id="msg-log-dir" class="select-sm" aria-label="Type d'échange">
+                      <option value="entrant">Réponse reçue du client</option>
+                      <option value="interne">Note interne équipe</option>
+                      <option value="sortant">Message envoyé hors app</option>
+                    </select>
+                    <select id="msg-log-canal" class="select-sm" aria-label="Canal">
+                      <option value="WhatsApp">WhatsApp</option>
+                      <option value="Email">Email</option>
+                      <option value="SMS">SMS</option>
+                      <option value="Note">Note</option>
+                    </select>
+                    <input type="text" id="msg-log-text" class="input-sm flex-1" placeholder="Consigner rapidement une réponse reçue ou une note..." required />
+                    <button type="submit" class="btn btn-ghost btn-sm">Ajouter</button>
+                  </form>
+                </div>
+
+                <!-- Composeur personnalisable -->
+                <div class="msg-composer-section">
+                  <div class="section-row">
+                    <h3>Proposition de réponse à personnaliser</h3>
+                    <div class="composer-meta">
+                      <label class="inline-field">
+                        <span>Canal :</span>
+                        <select id="composer-canal" class="select-sm">
+                          <option value="WhatsApp">WhatsApp</option>
+                          <option value="Email">Email</option>
+                        </select>
+                      </label>
+                      <span id="composer-draft-status" class="badge badge-neutral">Brouillon</span>
+                    </div>
+                  </div>
+
+                  <div class="template-pills" role="group" aria-label="Modèles rapides">
+                    <button type="button" class="btn btn-ghost btn-xs" data-tpl="proposition">Proposition créneau</button>
+                    <button type="button" class="btn btn-ghost btn-xs" data-tpl="recalage">Recalage conflit</button>
+                    <button type="button" class="btn btn-ghost btn-xs" data-tpl="precisions">Demander modèle / adresse</button>
+                    <button type="button" class="btn btn-ghost btn-xs" data-tpl="confirmation">Confirmation finale</button>
+                    <button type="button" class="btn btn-ghost btn-xs" data-tpl="rappel">Rappel J-2</button>
+                  </div>
+
+                  <div id="composer-subject-row" class="composer-subject-row" hidden>
+                    <label for="composer-objet">Objet email</label>
+                    <input type="text" id="composer-objet" class="input-sm" placeholder="Objet du mail..." />
+                  </div>
+
+                  <textarea id="composer-textarea" class="composer-textarea" rows="8" aria-label="Texte du message personnalisé"></textarea>
+
+                  <!-- Garde-fous en temps réel -->
+                  <div id="composer-guards" class="composer-guards"></div>
+
+                  <div class="composer-actions">
+                    <button type="button" id="btn-save-draft" class="btn btn-ghost btn-sm">Enregistrer brouillon</button>
+                    <button type="button" id="btn-copy-msg" class="btn btn-ghost btn-sm">Copier le texte</button>
+                    <a id="btn-open-wa" class="btn btn-whatsapp btn-sm" href="#" target="_blank" rel="noopener">Ouvrir WhatsApp</a>
+                    <a id="btn-open-mail" class="btn btn-ghost btn-sm" href="#" hidden>Ouvrir Email</a>
+                    <button type="button" id="btn-mark-sent" class="btn btn-primary btn-sm">Marquer envoyé</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <!-- ONGLET 4 : PILOTAGE & DEVIS -->
+      <section role="tabpanel" id="panel-finance" aria-labelledby="tab-finance" hidden="until-found">
+        <div class="panel-inner">
+          <div id="finance-summary-grid" class="finance-grid"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- MODALE : Édition / Création de Demande -->
+  <dialog id="dialog-demande" closedby="any" aria-labelledby="dialog-demande-title">
+    <div class="dialog-header">
+      <h1 id="dialog-demande-title">Fiche demande client</h1>
+      <button type="button" class="btn btn-ghost btn-sm" data-close-dialog="dialog-demande" aria-label="Fermer">✕</button>
+    </div>
+    <form id="form-demande" class="dialog-form">
+      <input type="hidden" id="dem-id" />
+      <div class="form-grid-2">
+        <label>
+          <span>Nom / Établissement *</span>
+          <input type="text" id="dem-nom" required />
+        </label>
+        <label>
+          <span>Catégorie</span>
+          <select id="dem-categorie">
+            <option value="particulier">Particulier</option>
+            <option value="prof">Professeur</option>
+            <option value="conservatoire">Conservatoire</option>
+            <option value="academie">Académie</option>
+            <option value="opera">Opéra / Orchestre</option>
+          </select>
+        </label>
+        <label>
+          <span>Pôle / Secteur géographique *</span>
+          <input type="text" id="dem-secteur" placeholder="ex. Bruxelles, Liège, Lille, Paris..." required />
+        </label>
+        <label>
+          <span>Statut</span>
+          <select id="dem-statut">
+            <option value="a_contacter">À contacter</option>
+            <option value="contacte">Contacté</option>
+            <option value="a_qualifier">À qualifier</option>
+            <option value="propose">Créneau proposé</option>
+            <option value="conflit">Conflit à recaler</option>
+            <option value="confirme">Confirmé</option>
+            <option value="doublon">Doublon</option>
+            <option value="annule">Annulé</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="form-grid-3">
+        <label>
+          <span>Ville</span>
+          <input type="text" id="dem-ville" />
+        </label>
+        <label>
+          <span>Code postal</span>
+          <input type="text" id="dem-cp" />
+        </label>
+        <label>
+          <span>Pays</span>
+          <input type="text" id="dem-pays" value="Belgique" />
+        </label>
+      </div>
+
+      <div class="form-row-inline">
+        <label class="flex-1">
+          <span>Adresse complète</span>
+          <input type="text" id="dem-adresse" />
+        </label>
+        <button type="button" id="btn-geocode-demande" class="btn btn-ghost btn-sm" title="Chercher coordonnées GPS via OpenStreetMap">Géocoder</button>
+      </div>
+
+      <div class="form-grid-3">
+        <label>
+          <span>Latitude</span>
+          <input type="number" step="any" id="dem-lat" />
+        </label>
+        <label>
+          <span>Longitude</span>
+          <input type="number" step="any" id="dem-lon" />
+        </label>
+        <label class="checkbox-field">
+          <input type="checkbox" id="dem-adresse-ok" />
+          <span>Adresse vérifiée</span>
+        </label>
+      </div>
+
+      <div class="form-grid-3">
+        <label>
+          <span>Canal préféré</span>
+          <select id="dem-canal">
+            <option value="WhatsApp">WhatsApp</option>
+            <option value="Email">Email</option>
+            <option value="SMS">SMS</option>
+            <option value="Telephone">Téléphone</option>
+          </select>
+        </label>
+        <label>
+          <span>Téléphone</span>
+          <input type="text" id="dem-tel" placeholder="+32..." />
+        </label>
+        <label>
+          <span>Email</span>
+          <input type="email" id="dem-email" />
+        </label>
+      </div>
+
+      <fieldset class="fieldset-harps">
+        <legend>Harpes &amp; tarification (durée et € calculés par instrument)</legend>
+        <div class="form-grid-4">
+          <label>
+            <span>Concert (3h · 320€)</span>
+            <input type="number" min="0" id="dem-concert" value="0" />
+          </label>
+          <label>
+            <span>Étude (3h · 280€)</span>
+            <input type="number" min="0" id="dem-etude" value="0" />
+          </label>
+          <label>
+            <span>Celtique (1h30 · 150€)</span>
+            <input type="number" min="0" id="dem-celtique" value="0" />
+          </label>
+          <label>
+            <span>À préciser</span>
+            <input type="number" min="0" id="dem-inconnu" value="0" />
+          </label>
+        </div>
+        <div class="form-grid-3">
+          <label>
+            <span>Durée totale (h)</span>
+            <input type="number" step="0.25" min="0" id="dem-duree" />
+          </label>
+          <label>
+            <span>Montant estimé (€)</span>
+            <input type="number" step="1" min="0" id="dem-montant" />
+          </label>
+          <label>
+            <span>Note tarif / fourchette</span>
+            <input type="text" id="dem-montant-note" />
+          </label>
+        </div>
+        <label>
+          <span>Détail des instruments</span>
+          <input type="text" id="dem-instruments-detail" placeholder="ex. Salvi Aurora + Camac celtique..." />
+        </label>
+      </fieldset>
+
+      <div class="form-grid-3">
+        <label>
+          <span>Jour planifié</span>
+          <select id="dem-jour">
+            <option value="">Non planifié</option>
+          </select>
+        </label>
+        <label>
+          <span>Heure début souhaitée</span>
+          <input type="time" id="dem-heure" />
+        </label>
+        <label>
+          <span>Statut devis</span>
+          <select id="dem-devis-statut">
+            <option value="non_requis">Non requis</option>
+            <option value="a_faire">À faire</option>
+            <option value="envoye">Envoyé</option>
+            <option value="accepte">Accepté / BC reçu</option>
+            <option value="marche_public">Marché public</option>
+          </select>
+        </label>
+      </div>
+
+      <label>
+        <span>Référence devis / BC</span>
+        <input type="text" id="dem-devis-ref" placeholder="ex. D-2026-0022 / BC..." />
+      </label>
+
+      <label>
+        <span>Contraintes &amp; disponibilités sourcées</span>
+        <textarea id="dem-contraintes" rows="2"></textarea>
+      </label>
+
+      <label>
+        <span>Action requise (Marie / Anthony)</span>
+        <textarea id="dem-action" rows="2"></textarea>
+      </label>
+
+      <div class="dialog-footer">
+        <button type="button" id="btn-delete-demande" class="btn btn-danger-ghost btn-sm" hidden>Supprimer</button>
+        <div class="dialog-footer-right">
+          <button type="button" class="btn btn-ghost" data-close-dialog="dialog-demande">Annuler</button>
+          <button type="submit" class="btn btn-primary">Enregistrer</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- MODALE : Nouvelle tournée -->
+  <dialog id="dialog-tournee" closedby="any" aria-labelledby="dialog-tournee-title">
+    <div class="dialog-header">
+      <h1 id="dialog-tournee-title">Programmer une tournée</h1>
+      <button type="button" class="btn btn-ghost btn-sm" data-close-dialog="dialog-tournee" aria-label="Fermer">✕</button>
+    </div>
+    <form id="form-tournee" class="dialog-form">
+      <label>
+        <span>Nom de la tournée *</span>
+        <input type="text" id="tour-nom" placeholder="ex. Suisse Romande — Janvier 2027" required />
+      </label>
+      <div class="form-grid-2">
+        <label>
+          <span>Date de début *</span>
+          <input type="date" id="tour-debut" required />
+        </label>
+        <label>
+          <span>Date de fin *</span>
+          <input type="date" id="tour-fin" required />
+        </label>
+      </div>
+      <div class="form-grid-2">
+        <label>
+          <span>Statut</span>
+          <select id="tour-statut">
+            <option value="a_venir">À venir</option>
+            <option value="en_preparation" selected>En préparation</option>
+            <option value="en_cours">En cours</option>
+            <option value="terminee">Terminée</option>
+          </select>
+        </label>
+        <label>
+          <span>Nombre de luthiers</span>
+          <select id="tour-luthiers">
+            <option value="1">1 luthier</option>
+            <option value="2" selected>2 luthiers</option>
+          </select>
+        </label>
+      </div>
+      <label>
+        <span>Notes / secteurs prévus</span>
+        <textarea id="tour-notes" rows="2"></textarea>
+      </label>
+      <div class="dialog-footer">
+        <div></div>
+        <div class="dialog-footer-right">
+          <button type="button" class="btn btn-ghost" data-close-dialog="dialog-tournee">Annuler</button>
+          <button type="submit" class="btn btn-primary">Créer la tournée</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.8/dist/umd/supabase.min.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" crossorigin=""></script>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/supabase-client.js"></script>
+  <script src="./js/routing.js"></script>
+  <script src="./js/templates.js"></script>
+  <script src="./js/map.js"></script>
+  <script src="./js/planning.js"></script>
+  <script src="./js/messages.js"></script>
+  <script src="./js/finance.js"></script>
+  <script src="./js/app.js"></script>
+</body>
+</html>

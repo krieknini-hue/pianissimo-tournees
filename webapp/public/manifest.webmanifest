@@ -1,0 +1,17 @@
+{
+  "name": "Pianissimo · Tournées Harpe",
+  "short_name": "Tournées Harpe",
+  "description": "Organisation des tournées d'entretien et réglage de harpes Pianissimo",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#FAF8F4",
+  "theme_color": "#231F1B",
+  "icons": [
+    {
+      "src": "./icons/harp.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
