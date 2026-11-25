@@ -1,4 +1,4 @@
-// Carte interactive Leaflet : Vue Pôles géographiques (anneaux SVG chiffrés) & Vue Clients (clusters)
+// Carte interactive Leaflet plein écran : Pôles géographiques (anneaux SVG chiffrés) & Clients (clusters)
 (() => {
   let mapInstance = null;
   let polesLayer = null;
@@ -262,7 +262,9 @@
 
   function invalidateSize() {
     if (mapInstance) {
-      setTimeout(() => mapInstance.invalidateSize(), 60);
+      setTimeout(() => {
+        mapInstance.invalidateSize();
+      }, 60);
     }
   }
 

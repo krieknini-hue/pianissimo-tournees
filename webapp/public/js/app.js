@@ -1,8 +1,11 @@
-// Orchestrateur principal : état, auth, onglets accessibles, dialogues natifs, CRUD Supabase
+// Orchestrateur principal : Hub tournées, atelier plein écran 5 pages, stepper ▲/▼, CRUD Supabase
 (() => {
+  const TAB_ORDER = ["tab-demandes", "tab-carte", "tab-planning", "tab-messages", "tab-finance"];
+
   const state = {
     tournees: [],
     currentTourneeId: null,
+    currentTabIndex: 0,
     demandes: [],
     messages: [],
     brouillons: [],
@@ -49,11 +52,33 @@
     return map[statut] || ["badge-neutral", statut];
   }
 
+  function tourStatusBadge(statut) {
+    const stLabels = {
+      a_venir: ["badge-neutral", "À venir"],
+      en_preparation: ["badge-warn", "En préparation"],
+      en_cours: ["badge-ok", "En cours"],
+      terminee: ["badge-neutral", "Terminée"],
+    };
+    return stLabels[statut] || ["badge-neutral", statut];
+  }
+
+  function updateStepperUi(index, label) {
+    state.currentTabIndex = index;
+    const num = `${index + 1}/${TAB_ORDER.length}`;
+    document.getElementById("page-stepper-label").textContent = num;
+    document.getElementById("ws-page-indicator").textContent = `${num} · ${label}`;
+    document.getElementById("btn-page-prev").disabled = index <= 0;
+    document.getElementById("btn-page-next").disabled = index >= TAB_ORDER.length - 1;
+  }
+
   function setupAccessibleTabs() {
     const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
     const panels = Array.from(document.querySelectorAll('[role="tabpanel"]'));
 
     function activateTab(tab) {
+      if (!tab) return;
+      const idx = TAB_ORDER.indexOf(tab.id);
+
       tabs.forEach((t) => {
         const selected = t === tab;
         t.setAttribute("aria-selected", selected ? "true" : "false");
@@ -65,15 +90,27 @@
         if (p.id === targetId) {
           p.removeAttribute("hidden");
           p.setAttribute("tabindex", "0");
+          p.scrollTop = 0;
         } else {
           p.setAttribute("hidden", "until-found");
           p.removeAttribute("tabindex");
         }
       });
 
+      if (targetId !== "panel-messages") {
+        window.PianissimoMessages.setMobileThreadOpen(false);
+      }
+
+      updateStepperUi(idx >= 0 ? idx : 0, tab.dataset.label || tab.textContent.trim());
       tab.scrollIntoView({ block: "nearest", inline: "nearest" });
-      if (targetId === "panel-demandes") {
+
+      if (targetId === "panel-carte") {
         window.PianissimoMap.invalidateSize();
+        setTimeout(() => {
+          if (!document.getElementById("filter-secteur").value) {
+            window.PianissimoMap.fitAll();
+          }
+        }, 90);
       }
     }
 
@@ -94,7 +131,6 @@
       });
     });
 
-    // Support hidden="until-found" find-in-page
     panels.forEach((panel) => {
       panel.addEventListener("beforematch", () => {
         const tab = tabs.find((t) => t.dataset.panel === panel.id);
@@ -134,30 +170,56 @@
     });
   }
 
-  function renderTourHeader() {
-    const select = document.getElementById("tour-select");
+  function renderTourHub() {
+    const select = document.getElementById("hub-tour-select");
+    const preferred =
+      state.currentTourneeId ||
+      (state.tournees.find((t) => t.statut === "en_preparation" || t.statut === "en_cours") || state.tournees[0])?.id ||
+      "";
+
     select.innerHTML = state.tournees
-      .map((t) => `<option value="${t.id}" ${t.id === state.currentTourneeId ? "selected" : ""}>${escapeHtml(t.nom)}</option>`)
+      .map((t) => `<option value="${t.id}" ${t.id === preferred ? "selected" : ""}>${escapeHtml(t.nom)} (${t.date_debut} → ${t.date_fin})</option>`)
       .join("");
 
+    const cards = document.getElementById("hub-tour-cards");
+    cards.innerHTML = state.tournees
+      .map((t) => {
+        const [cls, lbl] = tourStatusBadge(t.statut);
+        const isPriority = t.statut === "en_preparation" || t.statut === "en_cours";
+        return `
+          <button type="button" class="hub-tour-card ${isPriority ? "is-priority" : ""}" data-tour-id="${t.id}">
+            <div class="hub-tour-card-top">
+              <strong>${escapeHtml(t.nom)}</strong>
+              <span class="badge ${cls}">${lbl}</span>
+            </div>
+            <div style="font-size:0.84rem;color:#6B6257;">${escapeHtml(t.date_debut)} → ${escapeHtml(t.date_fin)} · ${t.nb_luthiers || 2} luthier(s)</div>
+            ${t.notes ? `<div style="font-size:0.78rem;color:#6B6257;">${escapeHtml(t.notes)}</div>` : ""}
+          </button>
+        `;
+      })
+      .join("");
+
+    cards.querySelectorAll(".hub-tour-card").forEach((btn) => {
+      btn.addEventListener("click", () => openTourneeWorkspace(btn.dataset.tourId));
+    });
+  }
+
+  function showHub() {
+    document.getElementById("tour-workspace").hidden = true;
+    document.getElementById("tour-hub").hidden = false;
+    window.PianissimoMessages.setMobileThreadOpen(false);
+    renderTourHub();
+  }
+
+  function renderTourHeader() {
     const t = currentTournee();
     if (!t) return;
-    document.getElementById("tour-dates-badge").textContent = `${t.date_debut} → ${t.date_fin}`;
-    const stBadge = document.getElementById("tour-status-badge");
-    const stLabels = {
-      a_venir: ["badge-neutral", "À venir"],
-      en_preparation: ["badge-warn", "En préparation"],
-      en_cours: ["badge-ok", "En cours"],
-      terminee: ["badge-neutral", "Terminée"],
-    };
-    const [cls, lbl] = stLabels[t.statut] || ["badge-neutral", t.statut];
-    stBadge.className = `badge ${cls}`;
-    stBadge.textContent = lbl;
+    document.getElementById("ws-tour-name").textContent = t.nom;
+    document.getElementById("ws-tour-dates").textContent = `${t.date_debut} → ${t.date_fin}`;
 
     const luthiersSel = document.getElementById("planning-luthiers");
     if (luthiersSel) luthiersSel.value = String(t.nb_luthiers || 2);
 
-    // Remplir le sélecteur d'itinéraire jour sur la carte et dans la modale demande
     const days = window.PianissimoPlanning.listTourDays(t);
     const mapDaySel = document.getElementById("map-day-route");
     mapDaySel.innerHTML = `<option value="">Trajet jour : aucun</option>` +
@@ -187,7 +249,7 @@
       <div class="kpi-card">
         <div class="kpi-label">Harpes actives</div>
         <div class="kpi-value">${c + e + cel + inc}</div>
-        <div class="kpi-detail">${c} concert · ${e} étude · ${cel} celtique · ${inc} ?</div>
+        <div class="kpi-detail">${c} concert · ${e} étude · ${cel} celt. · ${inc} ?</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">Demandes / RDV</div>
@@ -195,18 +257,17 @@
         <div class="kpi-detail">${confirmes} confirmé(s) · ${conflits} conflit(s)</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-label">Charge atelier totale</div>
+        <div class="kpi-label">Charge atelier</div>
         <div class="kpi-value">${totalHours.toFixed(1)} h</div>
-        <div class="kpi-detail">Calculée par instrument</div>
+        <div class="kpi-detail">Par instrument</div>
       </div>
       <div class="kpi-card">
-        <div class="kpi-label">Points de vigilance</div>
+        <div class="kpi-label">Vigilance</div>
         <div class="kpi-value" style="color:${openAnom ? "var(--danger)" : "var(--ok)"}">${openAnom}</div>
         <div class="kpi-detail">Sur ${state.anomalies.length} audit(s)</div>
       </div>
     `;
 
-    // Anomalies
     document.getElementById("anomalies-count-badge").textContent = `${openAnom} ouvert(s)`;
     const anomList = document.getElementById("anomalies-list");
     anomList.innerHTML = state.anomalies.length
@@ -214,7 +275,7 @@
           .map(
             (a) => `
           <div class="anomaly-item ${a.resolue ? "is-resolved" : ""}">
-            <div style="flex:1 1 320px;">
+            <div style="flex:1 1 280px;">
               <span class="badge ${a.severite === "critique" ? "badge-danger" : a.severite === "haute" ? "badge-warn" : "badge-neutral"}">${escapeHtml(a.severite.toUpperCase())}</span>
               <strong>${escapeHtml(a.titre)}</strong>
               <p>${escapeHtml(a.description)}</p>
@@ -222,7 +283,7 @@
             </div>
             <div style="display:flex;align-items:center;gap:6px;">
               ${a.demande_id ? `<button type="button" class="btn btn-ghost btn-xs js-anom-msg" data-id="${a.demande_id}">Messages</button>` : ""}
-              <button type="button" class="btn btn-ghost btn-xs js-anom-toggle" data-id="${a.id}" data-resolue="${a.resolue}">${a.resolue ? "Rouvrir" : "Marquer résolu"}</button>
+              <button type="button" class="btn btn-ghost btn-xs js-anom-toggle" data-id="${a.id}" data-resolue="${a.resolue}">${a.resolue ? "Rouvrir" : "Résolu"}</button>
             </div>
           </div>
         `,
@@ -512,12 +573,17 @@
     renderFinance();
   }
 
-  async function selectTournee(tourneeId) {
+  async function openTourneeWorkspace(tourneeId) {
     state.currentTourneeId = tourneeId;
     if (state.unsubscribeRealtime) {
       state.unsubscribeRealtime();
       state.unsubscribeRealtime = null;
     }
+
+    document.getElementById("tour-hub").hidden = true;
+    document.getElementById("tour-workspace").hidden = false;
+    activateTabFn(document.getElementById("tab-demandes"));
+
     await reloadCurrentTournee(true);
 
     state.unsubscribeRealtime = window.PianissimoDB.subscribeTourneeRealtime(tourneeId, () => {
@@ -533,13 +599,13 @@
     document.getElementById("app-shell").hidden = false;
 
     state.tournees = await window.PianissimoDB.fetchTournees();
-    if (state.tournees.length) {
-      const preferred =
-        state.tournees.find((t) => t.statut === "en_preparation" || t.statut === "en_cours") ||
-        state.tournees[0];
-      await selectTournee(preferred.id);
-    }
-    window.PianissimoMap.invalidateSize();
+    showHub();
+  }
+
+  function setMapMode(mode) {
+    state.mapMode = mode;
+    document.getElementById("btn-map-poles").classList.toggle("is-active", mode === "poles");
+    document.getElementById("btn-map-clients").classList.toggle("is-active", mode === "clients");
   }
 
   function bindGlobalUi() {
@@ -549,6 +615,7 @@
     window.PianissimoMap.initCallbacks({
       onSelectPole: (secteur) => {
         document.getElementById("filter-secteur").value = secteur;
+        setMapMode("clients");
         renderDemandesTableAndMap(false);
       },
       onOpenDemande: openDemandeDialog,
@@ -624,8 +691,12 @@
       },
     });
 
-    // Topbar & filters
-    document.getElementById("tour-select").addEventListener("change", (e) => selectTournee(e.target.value));
+    // Hub events
+    document.getElementById("btn-hub-open").addEventListener("click", () => {
+      const id = document.getElementById("hub-tour-select").value;
+      if (id) openTourneeWorkspace(id);
+    });
+    document.getElementById("btn-back-hub").addEventListener("click", showHub);
     document.getElementById("btn-new-tour").addEventListener("click", () => {
       document.getElementById("form-tournee").reset();
       document.getElementById("dialog-tournee").showModal();
@@ -635,16 +706,25 @@
       window.location.reload();
     });
 
+    // Page stepper ▲ / ▼
+    document.getElementById("btn-page-prev").addEventListener("click", () => {
+      if (state.currentTabIndex > 0) {
+        activateTabFn(document.getElementById(TAB_ORDER[state.currentTabIndex - 1]));
+      }
+    });
+    document.getElementById("btn-page-next").addEventListener("click", () => {
+      if (state.currentTabIndex < TAB_ORDER.length - 1) {
+        activateTabFn(document.getElementById(TAB_ORDER[state.currentTabIndex + 1]));
+      }
+    });
+
+    // Map controls
     document.getElementById("btn-map-poles").addEventListener("click", () => {
-      state.mapMode = "poles";
-      document.getElementById("btn-map-poles").classList.add("is-active");
-      document.getElementById("btn-map-clients").classList.remove("is-active");
+      setMapMode("poles");
       renderDemandesTableAndMap(false);
     });
     document.getElementById("btn-map-clients").addEventListener("click", () => {
-      state.mapMode = "clients";
-      document.getElementById("btn-map-clients").classList.add("is-active");
-      document.getElementById("btn-map-poles").classList.remove("is-active");
+      setMapMode("clients");
       renderDemandesTableAndMap(false);
     });
     document.getElementById("btn-map-fit").addEventListener("click", () => {
@@ -696,12 +776,10 @@
 
     document.getElementById("btn-print-planning").addEventListener("click", () => window.print());
 
-    // Harp count auto recalc
     ["dem-concert", "dem-etude", "dem-celtique", "dem-inconnu"].forEach((id) => {
       document.getElementById(id).addEventListener("change", recalcHarpFields);
     });
 
-    // Geocode address via Nominatim
     document.getElementById("btn-geocode-demande").addEventListener("click", async () => {
       const q = [
         document.getElementById("dem-adresse").value,
@@ -727,7 +805,6 @@
       }
     });
 
-    // Save demande
     document.getElementById("form-demande").addEventListener("submit", async (e) => {
       e.preventDefault();
       const id = document.getElementById("dem-id").value || null;
@@ -787,7 +864,6 @@
       await reloadCurrentTournee();
     });
 
-    // Save new tournee
     document.getElementById("form-tournee").addEventListener("submit", async (e) => {
       e.preventDefault();
       const nom = document.getElementById("tour-nom").value.trim();
@@ -809,11 +885,10 @@
       if (error) return toast(error.message, true);
       document.getElementById("dialog-tournee").close();
       state.tournees = await window.PianissimoDB.fetchTournees();
-      await selectTournee(data.id);
+      await openTourneeWorkspace(data.id);
       toast(`Tournée « ${nom} » créée.`);
     });
 
-    // Auth form
     document.getElementById("auth-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const errEl = document.getElementById("auth-error");

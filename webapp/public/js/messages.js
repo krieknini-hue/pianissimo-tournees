@@ -1,4 +1,4 @@
-// Module Messages & WhatsApp : historique client, personnalisation, garde-fous et liens d'envoi
+// Module Messages & WhatsApp : vue Maître -> Détail plein écran sur smartphone + 2 colonnes sur ordinateur
 (() => {
   let selectedId = null;
   let currentData = { tournee: null, demandes: [], messages: [], brouillons: [] };
@@ -25,6 +25,17 @@
     };
     const [cls, label] = map[statut] || ["badge-neutral", statut];
     return { cls, label };
+  }
+
+  function setMobileThreadOpen(isOpen) {
+    const layout = document.getElementById("messages-layout");
+    const ws = document.getElementById("tour-workspace");
+    if (layout) layout.classList.toggle("is-thread-open", isOpen);
+    if (ws) ws.classList.toggle("is-mobile-thread-open", isOpen);
+    if (isOpen) {
+      const panel = document.getElementById("panel-messages");
+      if (panel) panel.scrollTop = 0;
+    }
   }
 
   function getFilteredClients() {
@@ -55,10 +66,12 @@
 
     listEl.innerHTML = clients
       .map((d) => {
-        const msgCount = currentData.messages.filter((m) => m.demande_id === d.id).length;
+        const thread = currentData.messages.filter((m) => m.demande_id === d.id);
+        const lastMsg = thread[thread.length - 1];
         const draft = currentData.brouillons.find((b) => b.demande_id === d.id && b.canal === (d.canal_prefere === "Email" ? "Email" : "WhatsApp"));
         const { cls, label } = statusBadge(d.statut);
         const isSel = d.id === selectedId ? "is-selected" : "";
+        const preview = lastMsg ? `${lastMsg.contenu.slice(0, 52)}${lastMsg.contenu.length > 52 ? "…" : ""}` : "Aucun message encore";
         return `
           <li>
             <button type="button" class="msg-client-btn ${isSel}" data-id="${d.id}">
@@ -68,8 +81,9 @@
               </div>
               <div class="msg-client-row" style="font-size:0.76rem;color:#6B6257;">
                 <span>${escapeHtml(d.canal_prefere)} · ${escapeHtml(d.secteur)}</span>
-                <span>${msgCount} éch. ${draft?.statut === "envoye" ? "· ✓" : ""}</span>
+                <span>${thread.length} éch. ${draft?.statut === "envoye" ? "· ✓" : ""} ›</span>
               </div>
+              <div style="font-size:0.74rem;color:#6B6257;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(preview)}</div>
             </button>
           </li>
         `;
@@ -81,6 +95,7 @@
         selectedId = btn.dataset.id;
         renderSidebar();
         renderWorkspace();
+        setMobileThreadOpen(true);
       });
     });
   }
@@ -90,8 +105,7 @@
     const text = document.getElementById("composer-textarea").value;
     const objet = document.getElementById("composer-objet").value;
 
-    const subjectRow = document.getElementById("composer-subject-row");
-    subjectRow.hidden = canal !== "Email";
+    document.getElementById("composer-subject-row").hidden = canal !== "Email";
 
     const waBtn = document.getElementById("btn-open-wa");
     const mailBtn = document.getElementById("btn-open-mail");
@@ -130,6 +144,23 @@
     }
   }
 
+  function loadDraftForCanal(demande, canal) {
+    const existing = currentData.brouillons.find((b) => b.demande_id === demande.id && b.canal === canal);
+    const fallback = window.PianissimoTemplates.generateTemplate(
+      demande,
+      demande.statut === "confirme" ? "confirmation" : demande.statut === "conflit" ? "recalage" : "proposition",
+      currentData.tournee,
+    );
+
+    const badge = document.getElementById("composer-draft-status");
+    badge.textContent = existing?.statut === "envoye" ? "Envoyé ✓" : existing?.statut === "valide" ? "Validé" : "Brouillon";
+    badge.className = `badge ${existing?.statut === "envoye" ? "badge-ok" : "badge-neutral"}`;
+
+    document.getElementById("composer-objet").value = existing?.objet || fallback.objet;
+    document.getElementById("composer-textarea").value = existing?.texte_final || existing?.texte_propose || fallback.texte;
+    updateLinksAndGuards(demande);
+  }
+
   function renderWorkspace() {
     const emptyEl = document.getElementById("msg-empty-state");
     const activeEl = document.getElementById("msg-active-pane");
@@ -164,7 +195,6 @@
       ${demande.action_requise ? `<div><strong>Action requise :</strong> ${escapeHtml(demande.action_requise)}</div>` : ""}
     `;
 
-    // Thread messages
     const thread = currentData.messages.filter((m) => m.demande_id === demande.id);
     document.getElementById("msg-thread-count").textContent = `${thread.length} message(s)`;
     const threadEl = document.getElementById("msg-thread-list");
@@ -191,29 +221,9 @@
       threadEl.scrollTop = threadEl.scrollHeight;
     }
 
-    // Composer canal & brouillon
     const preferred = demande.canal_prefere === "Email" ? "Email" : "WhatsApp";
-    const canalSelect = document.getElementById("composer-canal");
-    canalSelect.value = preferred;
-
+    document.getElementById("composer-canal").value = preferred;
     loadDraftForCanal(demande, preferred);
-  }
-
-  function loadDraftForCanal(demande, canal) {
-    const existing = currentData.brouillons.find((b) => b.demande_id === demande.id && b.canal === canal);
-    const fallback = window.PianissimoTemplates.generateTemplate(
-      demande,
-      demande.statut === "confirme" ? "confirmation" : demande.statut === "conflit" ? "recalage" : "proposition",
-      currentData.tournee,
-    );
-
-    const badge = document.getElementById("composer-draft-status");
-    badge.textContent = existing?.statut === "envoye" ? "Envoyé ✓" : existing?.statut === "valide" ? "Validé" : "Brouillon";
-    badge.className = `badge ${existing?.statut === "envoye" ? "badge-ok" : "badge-neutral"}`;
-
-    document.getElementById("composer-objet").value = existing?.objet || fallback.objet;
-    document.getElementById("composer-textarea").value = existing?.texte_final || existing?.texte_propose || fallback.texte;
-    updateLinksAndGuards(demande);
   }
 
   function initEvents(cbs) {
@@ -222,6 +232,10 @@
     document.getElementById("msg-search")?.addEventListener("input", renderSidebar);
     document.getElementById("msg-filter-statut")?.addEventListener("change", renderSidebar);
     document.getElementById("msg-filter-canal")?.addEventListener("change", renderSidebar);
+
+    document.getElementById("btn-msg-back-list")?.addEventListener("click", () => {
+      setMobileThreadOpen(false);
+    });
 
     document.getElementById("btn-msg-open-fiche")?.addEventListener("click", () => {
       if (selectedId && callbacks.openDemande) callbacks.openDemande(selectedId);
@@ -298,8 +312,10 @@
 
   function render(data, openClientId = null) {
     currentData = data;
-    if (openClientId) selectedId = openClientId;
-    if (!selectedId && data.demandes?.length) {
+    if (openClientId) {
+      selectedId = openClientId;
+      setMobileThreadOpen(true);
+    } else if (!selectedId && data.demandes?.length && window.innerWidth >= 900) {
       const firstConflict = data.demandes.find((d) => d.statut === "conflit");
       selectedId = (firstConflict || data.demandes[0]).id;
     }
@@ -310,5 +326,6 @@
   window.PianissimoMessages = {
     initEvents,
     render,
+    setMobileThreadOpen,
   };
 })();

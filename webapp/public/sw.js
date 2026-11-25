@@ -1,17 +1,17 @@
-const CACHE_NAME = "pianissimo-tournees-v3";
+const CACHE_NAME = "pianissimo-tournees-v4";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
-  "./css/app.css?v=2",
-  "./js/config.js",
-  "./js/supabase-client.js",
-  "./js/routing.js",
-  "./js/templates.js",
-  "./js/map.js",
-  "./js/planning.js",
-  "./js/messages.js",
-  "./js/finance.js",
-  "./js/app.js",
+  "./css/app.css?v=3",
+  "./js/config.js?v=3",
+  "./js/supabase-client.js?v=3",
+  "./js/routing.js?v=3",
+  "./js/templates.js?v=3",
+  "./js/map.js?v=3",
+  "./js/planning.js?v=3",
+  "./js/messages.js?v=3",
+  "./js/finance.js?v=3",
+  "./js/app.js?v=3",
   "./icons/harp.svg",
   "./manifest.webmanifest",
 ];

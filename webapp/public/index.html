@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#231F1B" />
   <title>Pianissimo · Tournées Harpe</title>
   <link rel="icon" href="./icons/harp.svg" type="image/svg+xml" />
@@ -15,10 +15,10 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" crossorigin="" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" crossorigin="" />
-  <link rel="stylesheet" href="./css/app.css?v=2" />
+  <link rel="stylesheet" href="./css/app.css?v=3" />
 </head>
 <body>
-  <!-- Écran d'authentification par code équipe -->
+  <!-- Écran 0 : Authentification -->
   <section id="auth-gate" class="auth-gate" aria-label="Connexion équipe Pianissimo">
     <div class="auth-card">
       <div class="auth-brand">
@@ -40,107 +40,78 @@
 
   <!-- Application principale -->
   <div id="app-shell" class="app-shell" hidden>
-    <header class="topbar">
-      <div class="topbar-left">
+    <!-- ÉCRAN 1 : HUB SÉLECTION DES TOURNÉES -->
+    <section id="tour-hub" class="tour-hub" aria-label="Sélection de la tournée">
+      <header class="hub-header">
         <div class="brand-lockup">
-          <img src="./icons/harp.svg" alt="" width="34" height="34" />
+          <img src="./icons/harp.svg" alt="" width="40" height="40" />
           <div>
-            <span class="brand-title">Pianissimo</span>
+            <h1 class="brand-title">Pianissimo</h1>
             <span class="brand-tag">Tournées Harpe</span>
           </div>
         </div>
-
-        <div class="tour-picker">
-          <label for="tour-select" class="sr-only">Tournée sélectionnée</label>
-          <select id="tour-select" class="select-tour"></select>
-          <span id="tour-dates-badge" class="badge badge-neutral"></span>
-          <span id="tour-status-badge" class="badge"></span>
-          <button type="button" id="btn-new-tour" class="btn btn-ghost btn-sm" title="Créer une nouvelle tournée">+ Tournée</button>
-        </div>
-      </div>
-
-      <div class="topbar-right">
-        <div class="bareme-pill" title="Barème tournée par instrument">
-          <span>Concert <strong>320€ · 2h30</strong></span>
-          <span>Étude <strong>280€ · 2h</strong></span>
-          <span>Celtique <strong>150€ · 45 min</strong></span>
-        </div>
-        <span id="realtime-pill" class="realtime-pill" title="Synchronisation temps réel">● En direct</span>
         <button type="button" id="btn-logout" class="btn btn-ghost btn-sm">Déconnexion</button>
+      </header>
+
+      <div class="hub-body">
+        <div class="card hub-picker-card">
+          <h2>Choisir une tournée</h2>
+          <p class="card-sub">Sélectionnez une tournée programmée ou créez-en une nouvelle pour ouvrir l'atelier en plein écran.</p>
+
+          <div class="hub-select-row">
+            <label for="hub-tour-select" class="sr-only">Tournée programmée</label>
+            <select id="hub-tour-select" class="select-tour flex-1"></select>
+            <button type="button" id="btn-hub-open" class="btn btn-primary">Ouvrir la tournée</button>
+            <button type="button" id="btn-new-tour" class="btn btn-ghost">+ Nouvelle tournée</button>
+          </div>
+        </div>
+
+        <div class="hub-cards-section">
+          <h3>Tournées programmées</h3>
+          <div id="hub-tour-cards" class="hub-cards"></div>
+        </div>
       </div>
-    </header>
+    </section>
 
-    <!-- Navigation par onglets (Pattern modern-web-guidance: focusgroup + hidden=until-found) -->
-    <nav class="tabs-bar" aria-label="Modules de la tournée">
-      <div class="tablist" focusgroup="tablist nomemory" aria-label="Vues principales">
-        <button type="button" role="tab" id="tab-demandes" aria-selected="true" focusgroupstart data-panel="panel-demandes">
-          Demandes &amp; Carte
-          <span id="badge-tab-demandes" class="tab-count">0</span>
-        </button>
-        <button type="button" role="tab" id="tab-planning" aria-selected="false" data-panel="panel-planning">
-          Planning &amp; Trajets
-          <span id="badge-tab-planning" class="tab-count">0</span>
-        </button>
-        <button type="button" role="tab" id="tab-messages" aria-selected="false" data-panel="panel-messages">
-          Messages &amp; WhatsApp
-          <span id="badge-tab-messages" class="tab-count">0</span>
-        </button>
-        <button type="button" role="tab" id="tab-finance" aria-selected="false" data-panel="panel-finance">
-          Pilotage &amp; Devis
-        </button>
-      </div>
-    </nav>
+    <!-- ÉCRAN 2 : ATELIER PLEIN ÉCRAN DE LA TOURNÉE -->
+    <div id="tour-workspace" class="tour-workspace" hidden>
+      <header class="topbar">
+        <div class="topbar-left">
+          <button type="button" id="btn-back-hub" class="btn btn-ghost btn-sm">← Tournées</button>
+          <div class="ws-tour-title">
+            <strong id="ws-tour-name">Tournée</strong>
+            <span id="ws-tour-dates" class="badge badge-neutral"></span>
+          </div>
+        </div>
 
-    <main class="main-content">
-      <!-- ONGLET 1 : DEMANDES & CARTE -->
-      <section role="tabpanel" id="panel-demandes" aria-labelledby="tab-demandes" tabindex="0">
-        <div class="panel-inner">
-          <!-- KPI Strip -->
-          <div id="kpi-strip" class="kpi-strip"></div>
+        <div class="topbar-right">
+          <div class="bareme-pill" title="Barème tournée par instrument">
+            <span>Concert <strong>320€ · 2h30</strong></span>
+            <span>Étude <strong>280€ · 2h</strong></span>
+            <span>Celtique <strong>150€ · 45 min</strong></span>
+          </div>
+          <span id="ws-page-indicator" class="badge badge-concert">1/5 · Demandes</span>
+          <span id="realtime-pill" class="realtime-pill" title="Synchronisation temps réel">● Direct</span>
+        </div>
+      </header>
 
-          <!-- Panneau Anomalies / Points de vigilance -->
-          <details id="anomalies-drawer" class="anomalies-drawer">
-            <summary>
-              <span class="anomalies-summary-title">
-                Points de vigilance &amp; anomalies auditées
-                <span id="anomalies-count-badge" class="badge badge-danger">0</span>
-              </span>
-              <span class="anomalies-summary-hint">Cliquer pour ouvrir / masquer</span>
-            </summary>
-            <div id="anomalies-list" class="anomalies-list"></div>
-          </details>
+      <main class="workspace-pages">
+        <!-- PAGE 1 : DEMANDES -->
+        <section role="tabpanel" id="panel-demandes" aria-labelledby="tab-demandes" tabindex="0">
+          <div class="panel-inner">
+            <div id="kpi-strip" class="kpi-strip"></div>
 
-          <!-- Split Carte + Tableau -->
-          <div class="demandes-grid">
-            <!-- Carte interactive -->
-            <section class="card map-card" aria-label="Carte géographique des demandes">
-              <div class="card-head">
-                <div>
-                  <h2>Carte des harpes par zone</h2>
-                  <p class="card-sub">Pastilles chiffrées par type : Or = Concert · Bleu = Étude · Sauge = Celtique</p>
-                </div>
-                <div class="map-controls">
-                  <div class="segmented" role="group" aria-label="Mode d'affichage carte">
-                    <button type="button" id="btn-map-poles" class="seg-btn is-active" data-mode="poles">Pôles</button>
-                    <button type="button" id="btn-map-clients" class="seg-btn" data-mode="clients">Clients</button>
-                  </div>
-                  <select id="map-day-route" class="select-sm" aria-label="Afficher le trajet d'une journée">
-                    <option value="">Trajet jour : aucun</option>
-                  </select>
-                  <button type="button" id="btn-map-fit" class="btn btn-ghost btn-sm">Toute la zone</button>
-                </div>
-              </div>
-              <div id="harp-map" class="harp-map" aria-label="Carte interactive Leaflet"></div>
-              <div class="map-legend">
-                <span class="legend-item"><i class="dot dot-concert"></i> Concert (2h30 · 320€)</span>
-                <span class="legend-item"><i class="dot dot-etude"></i> Étude (2h · 280€)</span>
-                <span class="legend-item"><i class="dot dot-celtique"></i> Celtique (45 min · 150€)</span>
-                <span class="legend-item"><i class="dot dot-inconnu"></i> À préciser</span>
-                <span class="legend-item"><i class="dot dot-conflit"></i> Conflit à recaler</span>
-              </div>
-            </section>
+            <details id="anomalies-drawer" class="anomalies-drawer">
+              <summary>
+                <span class="anomalies-summary-title">
+                  Points de vigilance &amp; anomalies
+                  <span id="anomalies-count-badge" class="badge badge-danger">0</span>
+                </span>
+                <span class="anomalies-summary-hint">Ouvrir / masquer</span>
+              </summary>
+              <div id="anomalies-list" class="anomalies-list"></div>
+            </details>
 
-            <!-- Liste des demandes -->
             <section class="card table-card" aria-label="Totalité des demandes">
               <div class="card-head">
                 <div>
@@ -195,165 +166,222 @@
               </div>
             </section>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <!-- ONGLET 2 : PLANNING & TRAJETS -->
-      <section role="tabpanel" id="panel-planning" aria-labelledby="tab-planning" hidden="until-found">
-        <div class="panel-inner">
-          <div class="planning-toolbar card">
-            <div class="planning-toolbar-left">
-              <h2>Planning horaire &amp; temps de trajet</h2>
-              <p class="card-sub">Les durées par instrument ne sont jamais rognées · Trajets routiers OSRM avec mise en cache</p>
-            </div>
-            <div class="planning-toolbar-right">
-              <label class="inline-field">
-                <span>Luthiers :</span>
-                <select id="planning-luthiers" class="select-sm">
-                  <option value="1">1 luthier</option>
-                  <option value="2">2 luthiers (Anthony &amp; Marie)</option>
+        <!-- PAGE 2 : CARTE PLEIN ÉCRAN -->
+        <section role="tabpanel" id="panel-carte" aria-labelledby="tab-carte" hidden="until-found">
+          <div class="panel-inner map-fullscreen-inner">
+            <div class="map-toolbar">
+              <div class="map-controls">
+                <div class="segmented" role="group" aria-label="Mode d'affichage carte">
+                  <button type="button" id="btn-map-poles" class="seg-btn is-active" data-mode="poles">Pôles</button>
+                  <button type="button" id="btn-map-clients" class="seg-btn" data-mode="clients">Clients</button>
+                </div>
+                <select id="map-day-route" class="select-sm" aria-label="Afficher le trajet d'une journée">
+                  <option value="">Trajet jour : aucun</option>
                 </select>
-              </label>
-              <label class="inline-field">
-                <span>Départ journée :</span>
-                <input type="time" id="planning-start-time" class="input-sm" value="08:30" />
-              </label>
-              <button type="button" id="btn-recalc-all-routes" class="btn btn-ghost btn-sm">Recalculer trajets OSRM</button>
-              <button type="button" id="btn-print-planning" class="btn btn-primary btn-sm">Imprimer / PDF A4</button>
+                <button type="button" id="btn-map-fit" class="btn btn-ghost btn-sm">Toute la zone</button>
+              </div>
+              <div class="map-legend">
+                <span class="legend-item"><i class="dot dot-concert"></i> Concert (2h30)</span>
+                <span class="legend-item"><i class="dot dot-etude"></i> Étude (2h)</span>
+                <span class="legend-item"><i class="dot dot-celtique"></i> Celtique (45m)</span>
+                <span class="legend-item"><i class="dot dot-inconnu"></i> À préciser</span>
+                <span class="legend-item"><i class="dot dot-conflit"></i> Conflit</span>
+              </div>
             </div>
+            <div id="harp-map" class="harp-map" aria-label="Carte interactive Leaflet plein écran"></div>
           </div>
+        </section>
 
-          <div id="planning-days-container" class="planning-days"></div>
-        </div>
-      </section>
-
-      <!-- ONGLET 3 : MESSAGES & WHATSAPP -->
-      <section role="tabpanel" id="panel-messages" aria-labelledby="tab-messages" hidden="until-found">
-        <div class="panel-inner">
-          <div class="messages-layout">
-            <!-- Colonne gauche : liste clients -->
-            <aside class="card messages-sidebar" aria-label="Clients à contacter">
-              <div class="sidebar-head">
-                <h2>Clients &amp; suivis</h2>
-                <input type="search" id="msg-search" class="input-sm" placeholder="Filtrer un client..." aria-label="Filtrer la liste clients" />
-                <div class="sidebar-filters">
-                  <select id="msg-filter-statut" class="select-sm" aria-label="Statut client">
-                    <option value="">Tous statuts</option>
-                    <option value="conflit">Conflits en priorité</option>
-                    <option value="propose">En attente retour</option>
-                    <option value="a_qualifier">À qualifier</option>
-                    <option value="confirme">Confirmés</option>
-                  </select>
-                  <select id="msg-filter-canal" class="select-sm" aria-label="Canal">
-                    <option value="">Tous canaux</option>
-                    <option value="WhatsApp">WhatsApp</option>
-                    <option value="Email">Email</option>
-                  </select>
-                </div>
+        <!-- PAGE 3 : PLANNING & TRAJETS -->
+        <section role="tabpanel" id="panel-planning" aria-labelledby="tab-planning" hidden="until-found">
+          <div class="panel-inner">
+            <div class="planning-toolbar card">
+              <div class="planning-toolbar-left">
+                <h2>Planning horaire &amp; trajets</h2>
+                <p class="card-sub">Durées par instrument respectées · Trajets routiers OSRM</p>
               </div>
-              <ul id="msg-client-list" class="msg-client-list"></ul>
-            </aside>
-
-            <!-- Colonne droite : historique + composeur -->
-            <section class="card messages-workspace" aria-label="Historique et personnalisation du message">
-              <div id="msg-empty-state" class="empty-state">
-                <p>Sélectionnez un client dans la liste de gauche pour consulter son historique et personnaliser le message à envoyer.</p>
+              <div class="planning-toolbar-right">
+                <label class="inline-field">
+                  <span>Luthiers :</span>
+                  <select id="planning-luthiers" class="select-sm">
+                    <option value="1">1 luthier</option>
+                    <option value="2">2 luthiers</option>
+                  </select>
+                </label>
+                <label class="inline-field">
+                  <span>Départ :</span>
+                  <input type="time" id="planning-start-time" class="input-sm" value="08:30" />
+                </label>
+                <button type="button" id="btn-recalc-all-routes" class="btn btn-ghost btn-sm">Recalculer OSRM</button>
+                <button type="button" id="btn-print-planning" class="btn btn-primary btn-sm">Imprimer A4</button>
               </div>
+            </div>
 
-              <div id="msg-active-pane" class="msg-active-pane" hidden>
-                <div class="msg-client-banner">
-                  <div>
-                    <h2 id="msg-client-name"></h2>
-                    <p id="msg-client-meta" class="card-sub"></p>
-                  </div>
-                  <div class="msg-client-badges">
-                    <span id="msg-client-statut" class="badge"></span>
-                    <button type="button" id="btn-msg-open-fiche" class="btn btn-ghost btn-sm">Éditer fiche</button>
-                  </div>
-                </div>
+            <div id="planning-days-container" class="planning-days"></div>
+          </div>
+        </section>
 
-                <div id="msg-client-context" class="msg-context-box"></div>
-
-                <!-- Fil des échanges -->
-                <div class="msg-thread-section">
-                  <div class="section-row">
-                    <h3>Historique des échanges</h3>
-                    <span id="msg-thread-count" class="badge badge-neutral">0</span>
-                  </div>
-                  <div id="msg-thread-list" class="msg-thread-list"></div>
-
-                  <form id="msg-log-form" class="msg-log-form">
-                    <select id="msg-log-dir" class="select-sm" aria-label="Type d'échange">
-                      <option value="entrant">Réponse reçue du client</option>
-                      <option value="interne">Note interne équipe</option>
-                      <option value="sortant">Message envoyé hors app</option>
+        <!-- PAGE 4 : MESSAGES & WHATSAPP (Maître -> Détail plein écran sur mobile) -->
+        <section role="tabpanel" id="panel-messages" aria-labelledby="tab-messages" hidden="until-found">
+          <div class="panel-inner messages-panel-inner">
+            <div id="messages-layout" class="messages-layout">
+              <!-- Volet liste clients -->
+              <aside id="msg-sidebar-pane" class="card messages-sidebar" aria-label="Liste des clients">
+                <div class="sidebar-head">
+                  <h2>Clients &amp; suivis</h2>
+                  <input type="search" id="msg-search" class="input-sm" placeholder="Rechercher un client..." aria-label="Filtrer la liste clients" />
+                  <div class="sidebar-filters">
+                    <select id="msg-filter-statut" class="select-sm" aria-label="Statut client">
+                      <option value="">Tous statuts</option>
+                      <option value="conflit">Conflits</option>
+                      <option value="propose">Proposés</option>
+                      <option value="a_qualifier">À qualifier</option>
+                      <option value="confirme">Confirmés</option>
                     </select>
-                    <select id="msg-log-canal" class="select-sm" aria-label="Canal">
+                    <select id="msg-filter-canal" class="select-sm" aria-label="Canal">
+                      <option value="">Tous canaux</option>
                       <option value="WhatsApp">WhatsApp</option>
                       <option value="Email">Email</option>
-                      <option value="SMS">SMS</option>
-                      <option value="Note">Note</option>
                     </select>
-                    <input type="text" id="msg-log-text" class="input-sm flex-1" placeholder="Consigner rapidement une réponse reçue ou une note..." required />
-                    <button type="submit" class="btn btn-ghost btn-sm">Ajouter</button>
-                  </form>
+                  </div>
+                </div>
+                <ul id="msg-client-list" class="msg-client-list"></ul>
+              </aside>
+
+              <!-- Volet échanges + réponse WhatsApp -->
+              <section id="msg-workspace-pane" class="card messages-workspace" aria-label="Historique et réponse client">
+                <div id="msg-empty-state" class="empty-state">
+                  <p>Touchez un client dans la liste pour afficher ses échanges et préparer la réponse WhatsApp / Email.</p>
                 </div>
 
-                <!-- Composeur personnalisable -->
-                <div class="msg-composer-section">
-                  <div class="section-row">
-                    <h3>Proposition de réponse à personnaliser</h3>
-                    <div class="composer-meta">
-                      <label class="inline-field">
-                        <span>Canal :</span>
-                        <select id="composer-canal" class="select-sm">
-                          <option value="WhatsApp">WhatsApp</option>
-                          <option value="Email">Email</option>
-                        </select>
-                      </label>
-                      <span id="composer-draft-status" class="badge badge-neutral">Brouillon</span>
+                <div id="msg-active-pane" class="msg-active-pane" hidden>
+                  <div class="msg-client-banner">
+                    <div class="msg-banner-left">
+                      <button type="button" id="btn-msg-back-list" class="btn btn-ghost btn-sm msg-back-btn">← Clients</button>
+                      <div>
+                        <h2 id="msg-client-name"></h2>
+                        <p id="msg-client-meta" class="card-sub"></p>
+                      </div>
+                    </div>
+                    <div class="msg-client-badges">
+                      <span id="msg-client-statut" class="badge"></span>
+                      <button type="button" id="btn-msg-open-fiche" class="btn btn-ghost btn-sm">Fiche</button>
                     </div>
                   </div>
 
-                  <div class="template-pills" role="group" aria-label="Modèles rapides">
-                    <button type="button" class="btn btn-ghost btn-xs" data-tpl="proposition">Proposition créneau</button>
-                    <button type="button" class="btn btn-ghost btn-xs" data-tpl="recalage">Recalage conflit</button>
-                    <button type="button" class="btn btn-ghost btn-xs" data-tpl="precisions">Demander modèle / adresse</button>
-                    <button type="button" class="btn btn-ghost btn-xs" data-tpl="confirmation">Confirmation finale</button>
-                    <button type="button" class="btn btn-ghost btn-xs" data-tpl="rappel">Rappel J-2</button>
+                  <details class="msg-context-details">
+                    <summary>Détails instruments, adresse &amp; action requise</summary>
+                    <div id="msg-client-context" class="msg-context-box"></div>
+                  </details>
+
+                  <div class="msg-thread-section">
+                    <div class="section-row">
+                      <h3>Historique des échanges</h3>
+                      <span id="msg-thread-count" class="badge badge-neutral">0</span>
+                    </div>
+                    <div id="msg-thread-list" class="msg-thread-list"></div>
+
+                    <form id="msg-log-form" class="msg-log-form">
+                      <select id="msg-log-dir" class="select-sm" aria-label="Type d'échange">
+                        <option value="entrant">Reçu du client</option>
+                        <option value="interne">Note interne</option>
+                        <option value="sortant">Envoyé hors app</option>
+                      </select>
+                      <select id="msg-log-canal" class="select-sm" aria-label="Canal">
+                        <option value="WhatsApp">WhatsApp</option>
+                        <option value="Email">Email</option>
+                        <option value="SMS">SMS</option>
+                        <option value="Note">Note</option>
+                      </select>
+                      <input type="text" id="msg-log-text" class="input-sm flex-1" placeholder="Consigner une réponse reçue ou une note..." required />
+                      <button type="submit" class="btn btn-ghost btn-sm">Ajouter</button>
+                    </form>
                   </div>
 
-                  <div id="composer-subject-row" class="composer-subject-row" hidden>
-                    <label for="composer-objet">Objet email</label>
-                    <input type="text" id="composer-objet" class="input-sm" placeholder="Objet du mail..." />
-                  </div>
+                  <div class="msg-composer-section">
+                    <div class="section-row">
+                      <h3>Réponse à personnaliser</h3>
+                      <div class="composer-meta">
+                        <select id="composer-canal" class="select-sm" aria-label="Canal d'envoi">
+                          <option value="WhatsApp">WhatsApp</option>
+                          <option value="Email">Email</option>
+                        </select>
+                        <span id="composer-draft-status" class="badge badge-neutral">Brouillon</span>
+                      </div>
+                    </div>
 
-                  <textarea id="composer-textarea" class="composer-textarea" rows="8" aria-label="Texte du message personnalisé"></textarea>
+                    <div class="template-pills" role="group" aria-label="Modèles rapides">
+                      <button type="button" class="btn btn-ghost btn-xs" data-tpl="proposition">Proposition</button>
+                      <button type="button" class="btn btn-ghost btn-xs" data-tpl="recalage">Recalage</button>
+                      <button type="button" class="btn btn-ghost btn-xs" data-tpl="precisions">Modèle / adresse</button>
+                      <button type="button" class="btn btn-ghost btn-xs" data-tpl="confirmation">Confirmation</button>
+                      <button type="button" class="btn btn-ghost btn-xs" data-tpl="rappel">Rappel J-2</button>
+                    </div>
 
-                  <!-- Garde-fous en temps réel -->
-                  <div id="composer-guards" class="composer-guards"></div>
+                    <div id="composer-subject-row" class="composer-subject-row" hidden>
+                      <label for="composer-objet">Objet email</label>
+                      <input type="text" id="composer-objet" class="input-sm" placeholder="Objet du mail..." />
+                    </div>
 
-                  <div class="composer-actions">
-                    <button type="button" id="btn-save-draft" class="btn btn-ghost btn-sm">Enregistrer brouillon</button>
-                    <button type="button" id="btn-copy-msg" class="btn btn-ghost btn-sm">Copier le texte</button>
-                    <a id="btn-open-wa" class="btn btn-whatsapp btn-sm" href="#" target="_blank" rel="noopener">Ouvrir WhatsApp</a>
-                    <a id="btn-open-mail" class="btn btn-ghost btn-sm" href="#" hidden>Ouvrir Email</a>
-                    <button type="button" id="btn-mark-sent" class="btn btn-primary btn-sm">Marquer envoyé</button>
+                    <textarea id="composer-textarea" class="composer-textarea" rows="7" aria-label="Texte du message personnalisé"></textarea>
+
+                    <div id="composer-guards" class="composer-guards"></div>
+
+                    <div class="composer-actions">
+                      <button type="button" id="btn-save-draft" class="btn btn-ghost btn-sm">Enregistrer</button>
+                      <button type="button" id="btn-copy-msg" class="btn btn-ghost btn-sm">Copier</button>
+                      <a id="btn-open-wa" class="btn btn-whatsapp btn-sm" href="#" target="_blank" rel="noopener">Envoyer WhatsApp</a>
+                      <a id="btn-open-mail" class="btn btn-ghost btn-sm" href="#" hidden>Ouvrir Email</a>
+                      <button type="button" id="btn-mark-sent" class="btn btn-primary btn-sm">Marquer envoyé</button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </section>
+              </section>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <!-- ONGLET 4 : PILOTAGE & DEVIS -->
-      <section role="tabpanel" id="panel-finance" aria-labelledby="tab-finance" hidden="until-found">
-        <div class="panel-inner">
-          <div id="finance-summary-grid" class="finance-grid"></div>
+        <!-- PAGE 5 : PILOTAGE & DEVIS -->
+        <section role="tabpanel" id="panel-finance" aria-labelledby="tab-finance" hidden="until-found">
+          <div class="panel-inner">
+            <div id="finance-summary-grid" class="finance-grid"></div>
+          </div>
+        </section>
+      </main>
+
+      <!-- Barre d'onglets (haut sur desktop, barre inférieure sur smartphone) -->
+      <nav class="tabs-bar" aria-label="Navigation entre pages">
+        <div class="tablist" focusgroup="tablist nomemory" aria-label="Pages de la tournée">
+          <button type="button" role="tab" id="tab-demandes" aria-selected="true" focusgroupstart data-panel="panel-demandes" data-label="Demandes">
+            <span class="tab-label">Demandes</span>
+            <span id="badge-tab-demandes" class="tab-count">0</span>
+          </button>
+          <button type="button" role="tab" id="tab-carte" aria-selected="false" data-panel="panel-carte" data-label="Carte">
+            <span class="tab-label">Carte</span>
+          </button>
+          <button type="button" role="tab" id="tab-planning" aria-selected="false" data-panel="panel-planning" data-label="Planning">
+            <span class="tab-label">Planning</span>
+            <span id="badge-tab-planning" class="tab-count">0</span>
+          </button>
+          <button type="button" role="tab" id="tab-messages" aria-selected="false" data-panel="panel-messages" data-label="WhatsApp">
+            <span class="tab-label">WhatsApp</span>
+            <span id="badge-tab-messages" class="tab-count">0</span>
+          </button>
+          <button type="button" role="tab" id="tab-finance" aria-selected="false" data-panel="panel-finance" data-label="Pilotage">
+            <span class="tab-label">Pilotage</span>
+          </button>
         </div>
-      </section>
-    </main>
+      </nav>
+
+      <!-- Boutons flottants ▲ / ▼ pour changer de page plein écran sans conflit tactile -->
+      <div id="page-stepper" class="page-stepper" role="group" aria-label="Changer de page">
+        <button type="button" id="btn-page-prev" class="stepper-btn" aria-label="Page précédente" title="Page précédente">▲</button>
+        <span id="page-stepper-label" class="stepper-label">1/5</span>
+        <button type="button" id="btn-page-next" class="stepper-btn" aria-label="Page suivante" title="Page suivante">▼</button>
+      </div>
+    </div>
   </div>
 
   <!-- MODALE : Édition / Création de Demande -->
@@ -603,14 +631,14 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" crossorigin=""></script>
 
-  <script src="./js/config.js"></script>
-  <script src="./js/supabase-client.js"></script>
-  <script src="./js/routing.js"></script>
-  <script src="./js/templates.js"></script>
-  <script src="./js/map.js"></script>
-  <script src="./js/planning.js"></script>
-  <script src="./js/messages.js"></script>
-  <script src="./js/finance.js"></script>
-  <script src="./js/app.js"></script>
+  <script src="./js/config.js?v=3"></script>
+  <script src="./js/supabase-client.js?v=3"></script>
+  <script src="./js/routing.js?v=3"></script>
+  <script src="./js/templates.js?v=3"></script>
+  <script src="./js/map.js?v=3"></script>
+  <script src="./js/planning.js?v=3"></script>
+  <script src="./js/messages.js?v=3"></script>
+  <script src="./js/finance.js?v=3"></script>
+  <script src="./js/app.js?v=3"></script>
 </body>
 </html>
