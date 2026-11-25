@@ -897,6 +897,56 @@ select, input, textarea {
   align-items: center;
 }
 
+.abby-status-banner {
+  padding: 9px 11px;
+  border-radius: var(--radius-sm);
+  font-size: 0.84rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+}
+.abby-status-banner.is-found { background: var(--ok-bg); color: var(--ok); border-color: #B6DEC6; }
+.abby-status-banner.is-new { background: var(--warn-bg); color: var(--warn); border-color: #E7C89E; }
+.abby-status-banner.is-warn { background: var(--warn-bg); color: var(--warn); border-color: #E7C89E; }
+.abby-status-banner.is-loading { background: var(--surface-alt); color: var(--ink-muted); }
+
+.abby-search-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.abby-search-row input {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.abby-hints-box {
+  background: #FBF7EE;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  display: grid;
+  gap: 5px;
+  overflow-wrap: anywhere;
+}
+.abby-hints-box p { margin: 0; }
+
+.abby-existing-box {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  font-size: 0.82rem;
+  display: grid;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+.abby-existing-box p { margin: 0; }
+.abby-existing-box .checkbox-field { padding-top: 2px; }
+
 @media (max-width: 640px) {
   .bareme-config-row,
   .abby-line-row {

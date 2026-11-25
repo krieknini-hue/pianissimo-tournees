@@ -497,6 +497,126 @@
   }
 
   let abbyDraftLines = [];
+  const abbyModalState = {
+    demandeId: null,
+    checking: false,
+    checkData: null,
+    knownCustomers: new Map(),
+  };
+
+  function formatAbbyAddressObj(b) {
+    if (!b) return "Non renseignée";
+    const parts = [b.line1 || b.address, b.line2 || b.complement, [b.zipCode, b.city].filter(Boolean).join(" "), b.country].filter(Boolean);
+    return parts.length ? parts.join(", ") : "Non renseignée";
+  }
+
+  function appendAbbySelectOption(selectEl, value, label) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    selectEl.appendChild(opt);
+  }
+
+  function populateAbbySelect(selectEl, checkData) {
+    selectEl.innerHTML = "";
+    const seen = new Set();
+    const candidates = [];
+    if (checkData?.matched) candidates.push(checkData.matched);
+    (checkData?.candidates || []).forEach((c) => {
+      if (c && c.id && !seen.has(c.id)) {
+        candidates.push(c);
+      }
+    });
+    candidates.forEach((c) => {
+      if (!c?.id || seen.has(c.id)) return;
+      seen.add(c.id);
+      abbyModalState.knownCustomers.set(c.id, c);
+      const tag = c.isOrganization ? "Étab." : "Particulier";
+      const city = c.billingAddress?.city ? ` — ${c.billingAddress.zipCode || ""} ${c.billingAddress.city}`.trim() : "";
+      const why = c.reason ? ` (${c.reason})` : "";
+      appendAbbySelectOption(selectEl, c.id, `${c.displayName} [${tag}]${city}${why}`);
+    });
+    appendAbbySelectOption(selectEl, "__CREATE__", "➕ Créer une nouvelle fiche client dans Abby");
+  }
+
+  function syncAbbyCustomerUiState() {
+    const selectEl = document.getElementById("abby-customer-select");
+    const val = selectEl.value || "__CREATE__";
+    const isCreate = val === "__CREATE__";
+    const existingBox = document.getElementById("abby-existing-box");
+    const fieldsBox = document.getElementById("abby-customer-fields");
+    const identityBox = document.getElementById("abby-identity-fields");
+    const updateChk = document.getElementById("abby-update-existing-addr");
+    const submitBtn = document.getElementById("btn-abby-create-draft");
+
+    if (isCreate) {
+      existingBox.hidden = true;
+      updateChk.checked = false;
+      identityBox.hidden = false;
+      fieldsBox.hidden = false;
+      if (!abbyModalState.checking) {
+        submitBtn.textContent = "Créer la fiche client + le brouillon Abby";
+      }
+    } else {
+      const cust = abbyModalState.knownCustomers.get(val);
+      existingBox.hidden = false;
+      document.getElementById("abby-existing-address").textContent = formatAbbyAddressObj(cust?.billingAddress);
+      const propAddr = abbyModalState.checkData?.proposed_customer?.billingAddress;
+      const hintEl = document.getElementById("abby-existing-client-hint");
+      if (propAddr && (propAddr.address || propAddr.raw_source)) {
+        const clientAddrStr = propAddr.address
+          ? `${propAddr.address}, ${propAddr.zipCode} ${propAddr.city} (${propAddr.country})`
+          : propAddr.raw_source;
+        hintEl.textContent = `Adresse sur la demande client : ${clientAddrStr}`;
+        hintEl.hidden = false;
+      } else {
+        hintEl.hidden = true;
+      }
+      identityBox.hidden = true;
+      fieldsBox.hidden = !updateChk.checked;
+      if (!abbyModalState.checking) {
+        submitBtn.textContent = "Créer le brouillon Abby";
+      }
+    }
+
+    const kind = document.getElementById("abby-cust-kind").value;
+    document.getElementById("abby-contact-name-fields").hidden = kind === "organization";
+    document.getElementById("abby-org-name-field").hidden = kind !== "organization";
+  }
+
+  function fillAbbyCustomerForm(checkData) {
+    const prop = checkData?.proposed_customer || {};
+    const addr = prop.billingAddress || {};
+    document.getElementById("abby-cust-kind").value = prop.kind === "organization" ? "organization" : "contact";
+    document.getElementById("abby-cust-firstname").value = (prop.firstname || "").toLocaleLowerCase("fr-FR");
+    document.getElementById("abby-cust-lastname").value = (prop.lastname || "").toLocaleUpperCase("fr-FR");
+    document.getElementById("abby-cust-orgname").value = prop.name || "";
+    document.getElementById("abby-cust-email").value = prop.email || "";
+    document.getElementById("abby-cust-phone").value = prop.phone || "";
+    document.getElementById("abby-addr-line1").value = addr.address || "";
+    document.getElementById("abby-addr-complement").value = addr.complement || "";
+    document.getElementById("abby-addr-zip").value = addr.zipCode || "";
+    document.getElementById("abby-addr-city").value = addr.city || "";
+    document.getElementById("abby-addr-country").value = addr.country || "FR";
+    document.getElementById("abby-addr-review-warn").hidden = !addr.needs_review;
+
+    const hintsBox = document.getElementById("abby-client-hints-box");
+    const hints = checkData?.client_address_hints || [];
+    const linesHtml = [];
+    if (addr.raw_source) {
+      linesHtml.push(`<p><strong>Adresse sur la fiche demande :</strong> ${escapeHtml(addr.raw_source)}</p>`);
+    }
+    hints.forEach((h) => {
+      linesHtml.push(`<p><strong>Message ${escapeHtml(h.canal)} (${escapeHtml(h.date)}) :</strong> « ${escapeHtml(h.extrait)} »</p>`);
+    });
+    if (linesHtml.length) {
+      hintsBox.innerHTML = linesHtml.join("");
+      hintsBox.hidden = false;
+    } else {
+      hintsBox.innerHTML = "";
+      hintsBox.hidden = true;
+    }
+  }
 
   function renderAbbyLines() {
     const box = document.getElementById("abby-lines-container");
@@ -545,7 +665,7 @@
     });
   }
 
-  function openAbbyDraftDialog(demandeId) {
+  async function openAbbyDraftDialog(demandeId) {
     const d = state.demandes.find((x) => x.id === demandeId);
     if (!d) return;
     const b = getTourBareme(currentTournee());
@@ -574,7 +694,60 @@
       });
     }
     renderAbbyLines();
+
+    abbyModalState.demandeId = d.id;
+    abbyModalState.checking = true;
+    abbyModalState.checkData = null;
+    abbyModalState.knownCustomers.clear();
+
+    const statusBanner = document.getElementById("abby-customer-status");
+    const selectEl = document.getElementById("abby-customer-select");
+    const submitBtn = document.getElementById("btn-abby-create-draft");
+    document.getElementById("abby-customer-search-q").value = "";
+    document.getElementById("abby-update-existing-addr").checked = false;
+    document.getElementById("abby-existing-box").hidden = true;
+    document.getElementById("abby-customer-fields").hidden = true;
+    document.getElementById("abby-client-hints-box").hidden = true;
+    statusBanner.className = "abby-status-banner is-loading";
+    statusBanner.textContent = "Vérification de la fiche client dans Abby en cours…";
+    selectEl.innerHTML = "";
+    appendAbbySelectOption(selectEl, "__CREATE__", "Vérification en cours…");
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Vérification Abby…";
+
     document.getElementById("dialog-abby-devis").showModal();
+
+    try {
+      const check = await window.PianissimoDB.checkAbbyCustomer(d.id);
+      if (abbyModalState.demandeId !== d.id) return;
+      abbyModalState.checkData = check;
+      abbyModalState.checking = false;
+      populateAbbySelect(selectEl, check);
+      fillAbbyCustomerForm(check);
+
+      if (check.status === "found" && check.matched) {
+        selectEl.value = check.matched.id;
+        statusBanner.className = "abby-status-banner is-found";
+        statusBanner.textContent = `✅ Fiche existante trouvée dans Abby : ${check.matched.displayName} (${check.matched.reason || "correspondance"})`;
+      } else if (check.status === "candidates" && check.candidates?.length) {
+        selectEl.value = "__CREATE__";
+        statusBanner.className = "abby-status-banner is-new";
+        statusBanner.textContent = `⚠️ ${check.candidates.length} fiche(s) proche(s) dans Abby : vérifiez dans la liste ou créez la nouvelle fiche ci-dessous.`;
+      } else {
+        selectEl.value = "__CREATE__";
+        statusBanner.className = "abby-status-banner is-new";
+        statusBanner.textContent = "🆕 Client inexistant dans Abby : vérifiez le prénom (minuscules), NOM (MAJUSCULES) et l'adresse de facturation ci-dessous.";
+      }
+      submitBtn.disabled = false;
+      syncAbbyCustomerUiState();
+    } catch (err) {
+      if (abbyModalState.demandeId !== d.id) return;
+      abbyModalState.checking = false;
+      statusBanner.className = "abby-status-banner is-warn";
+      statusBanner.textContent = `Impossible de vérifier Abby automatiquement : ${err.message}`;
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Créer le brouillon Abby";
+    }
   }
 
   function openAbbySendDialog(demandeId, billingId) {
@@ -1128,25 +1301,140 @@
       renderAbbyLines();
     });
 
+    document.getElementById("abby-customer-select").addEventListener("change", syncAbbyCustomerUiState);
+    document.getElementById("abby-update-existing-addr").addEventListener("change", syncAbbyCustomerUiState);
+    document.getElementById("abby-cust-kind").addEventListener("change", syncAbbyCustomerUiState);
+    document.getElementById("abby-cust-firstname").addEventListener("blur", (e) => {
+      e.target.value = e.target.value.trim().toLocaleLowerCase("fr-FR");
+    });
+    document.getElementById("abby-cust-lastname").addEventListener("blur", (e) => {
+      e.target.value = e.target.value.trim().toLocaleUpperCase("fr-FR");
+    });
+
+    const runManualAbbySearch = async () => {
+      const q = document.getElementById("abby-customer-search-q").value.trim();
+      if (!q) return;
+      const btn = document.getElementById("btn-abby-customer-search");
+      btn.disabled = true;
+      btn.textContent = "Recherche…";
+      try {
+        const res = await window.PianissimoDB.searchAbbyCustomers(q);
+        const items = res.items || [];
+        const selectEl = document.getElementById("abby-customer-select");
+        if (!items.length) {
+          toast(`Aucune fiche Abby trouvée pour « ${q} ».`, true);
+          return;
+        }
+        items.forEach((c) => {
+          if (!c?.id) return;
+          const already = Array.from(selectEl.options).some((o) => o.value === c.id);
+          abbyModalState.knownCustomers.set(c.id, c);
+          if (!already) {
+            const opt = document.createElement("option");
+            opt.value = c.id;
+            const tag = c.isOrganization ? "Étab." : "Particulier";
+            const city = c.billingAddress?.city ? ` — ${c.billingAddress.zipCode || ""} ${c.billingAddress.city}`.trim() : "";
+            opt.textContent = `${c.displayName} [${tag}]${city} (recherche)`;
+            const createOpt = Array.from(selectEl.options).find((o) => o.value === "__CREATE__");
+            selectEl.insertBefore(opt, createOpt || null);
+          }
+        });
+        selectEl.value = items[0].id;
+        syncAbbyCustomerUiState();
+        toast(`${items.length} fiche(s) trouvée(s) dans Abby.`);
+      } catch (err) {
+        toast(err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Chercher dans Abby";
+      }
+    };
+
+    document.getElementById("btn-abby-customer-search").addEventListener("click", runManualAbbySearch);
+    document.getElementById("abby-customer-search-q").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        runManualAbbySearch();
+      }
+    });
+
     document.getElementById("form-abby-devis").addEventListener("submit", async (e) => {
       e.preventDefault();
+      const selectVal = document.getElementById("abby-customer-select").value || "__CREATE__";
+      const isCreate = selectVal === "__CREATE__";
+      const updateExistingAddr = !isCreate && document.getElementById("abby-update-existing-addr").checked;
+
+      const billingAddress = {
+        address: document.getElementById("abby-addr-line1").value.trim(),
+        complement: document.getElementById("abby-addr-complement").value.trim(),
+        zipCode: document.getElementById("abby-addr-zip").value.trim(),
+        city: document.getElementById("abby-addr-city").value.trim(),
+        country: document.getElementById("abby-addr-country").value || "FR",
+      };
+
+      const draftPayload = {
+        demande_id: document.getElementById("abby-demande-id").value,
+        title: document.getElementById("abby-devis-title").value.trim() || null,
+        lines: abbyDraftLines,
+      };
+
+      if (isCreate) {
+        const kind = document.getElementById("abby-cust-kind").value;
+        const firstname = document.getElementById("abby-cust-firstname").value.trim().toLocaleLowerCase("fr-FR");
+        const lastname = document.getElementById("abby-cust-lastname").value.trim().toLocaleUpperCase("fr-FR");
+        const orgName = document.getElementById("abby-cust-orgname").value.trim();
+        document.getElementById("abby-cust-firstname").value = firstname;
+        document.getElementById("abby-cust-lastname").value = lastname;
+
+        if (kind === "contact" && (!firstname || !lastname)) {
+          toast("Prénom (en minuscules) et NOM DE FAMILLE (en MAJUSCULES) obligatoires.", true);
+          return;
+        }
+        if (kind === "organization" && !orgName) {
+          toast("Le nom de l'établissement est obligatoire.", true);
+          return;
+        }
+        if (!billingAddress.address || !billingAddress.zipCode || !billingAddress.city) {
+          toast("Complétez l'adresse de facturation (rue, code postal, ville).", true);
+          return;
+        }
+        draftPayload.customer_id = null;
+        draftPayload.customer_payload = {
+          force_create: true,
+          kind,
+          firstname,
+          lastname,
+          name: orgName,
+          email: document.getElementById("abby-cust-email").value.trim(),
+          phone: document.getElementById("abby-cust-phone").value.trim(),
+          billingAddress,
+        };
+      } else {
+        draftPayload.customer_id = selectVal;
+        draftPayload.update_existing_billing_address = updateExistingAddr;
+        if (updateExistingAddr) {
+          if (!billingAddress.address || !billingAddress.zipCode || !billingAddress.city) {
+            toast("Complétez l'adresse de facturation avant la mise à jour dans Abby.", true);
+            return;
+          }
+          draftPayload.customer_payload = { billingAddress };
+        }
+      }
+
       const btn = document.getElementById("btn-abby-create-draft");
       btn.disabled = true;
-      btn.textContent = "Création Abby...";
+      btn.textContent = isCreate ? "Création fiche + devis…" : "Création Abby…";
       try {
-        const res = await window.PianissimoDB.createAbbyDevisDraft({
-          demande_id: document.getElementById("abby-demande-id").value,
-          title: document.getElementById("abby-devis-title").value.trim() || null,
-          lines: abbyDraftLines,
-        });
+        const res = await window.PianissimoDB.createAbbyDevisDraft(draftPayload);
         document.getElementById("dialog-abby-devis").close();
-        toast(`Brouillon Abby créé (${res.customer_name}). Ouvrez « PDF brouillon ↗ » pour le contrôler.`);
+        const actionLabel = res.customer_created ? "Fiche client créée et brouillon Abby généré" : "Fiche Abby existante réutilisée et brouillon généré";
+        toast(`${actionLabel} (${res.customer_name}). Ouvrez « PDF brouillon ↗ » pour le contrôler.`);
         await reloadCurrentTournee();
       } catch (err) {
         toast(err.message, true);
       } finally {
         btn.disabled = false;
-        btn.textContent = "Créer le brouillon Abby";
+        syncAbbyCustomerUiState();
       }
     });
 

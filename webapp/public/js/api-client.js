@@ -88,6 +88,14 @@
     return apiFetch("/api/sync/messages", { method: "POST" });
   }
 
+  async function checkAbbyCustomer(demandeId) {
+    return apiFetch(`/api/abby/customer/check?demande_id=${encodeURIComponent(demandeId)}`);
+  }
+
+  async function searchAbbyCustomers(q) {
+    return apiFetch(`/api/abby/customers/search?q=${encodeURIComponent(q || "")}`);
+  }
+
   async function createAbbyDevisDraft(payload) {
     return apiFetch("/api/abby/devis/draft", { method: "POST", body: payload });
   }
@@ -148,6 +156,8 @@
     logMessage,
     sendMessageDirect,
     syncMessagesNow,
+    checkAbbyCustomer,
+    searchAbbyCustomers,
     createAbbyDevisDraft,
     finalizeAbbyDevis,
     sendAbbyDevis,

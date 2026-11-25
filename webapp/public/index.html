@@ -15,7 +15,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" crossorigin="" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" crossorigin="" />
-  <link rel="stylesheet" href="./css/app.css?v=5" />
+  <link rel="stylesheet" href="./css/app.css?v=6" />
 </head>
 <body>
   <!-- Écran 0 : Authentification -->
@@ -687,8 +687,113 @@
     <form id="form-abby-devis" class="dialog-form">
       <input type="hidden" id="abby-demande-id" />
       <p id="abby-client-summary" class="card-sub" style="margin:0;"></p>
+
+      <fieldset class="fieldset-harps" id="abby-customer-section">
+        <legend>1. Fiche client Abby &amp; adresse de facturation</legend>
+        <div id="abby-customer-status" class="abby-status-banner is-loading">Vérification dans Abby en cours…</div>
+
+        <label>
+          <span>Fiche Abby utilisée pour le devis</span>
+          <select id="abby-customer-select"></select>
+        </label>
+
+        <div class="abby-search-row">
+          <input type="search" id="abby-customer-search-q" placeholder="Rechercher un client déjà présent dans Abby (nom, ville, email…)" />
+          <button type="button" id="btn-abby-customer-search" class="btn btn-ghost btn-sm">Chercher dans Abby</button>
+        </div>
+
+        <div id="abby-existing-box" class="abby-existing-box" hidden>
+          <p><strong>Adresse enregistrée dans Abby :</strong> <span id="abby-existing-address"></span></p>
+          <p id="abby-existing-client-hint" hidden></p>
+          <label class="checkbox-field">
+            <input type="checkbox" id="abby-update-existing-addr" />
+            <span>Mettre à jour l'adresse de facturation sur cette fiche Abby avec celle ci-dessous</span>
+          </label>
+        </div>
+
+        <div id="abby-client-hints-box" class="abby-hints-box" hidden></div>
+
+        <div id="abby-customer-fields" style="display:grid;gap:10px;" hidden>
+          <div id="abby-identity-fields" style="display:grid;gap:10px;">
+            <div class="form-grid-3">
+              <label>
+                <span>Type de client Abby</span>
+                <select id="abby-cust-kind">
+                  <option value="contact">Particulier (prénom / NOM)</option>
+                  <option value="organization">Établissement / Conservatoire</option>
+                </select>
+              </label>
+              <label>
+                <span>Email</span>
+                <input type="email" id="abby-cust-email" placeholder="optionnel" />
+              </label>
+              <label>
+                <span>Téléphone</span>
+                <input type="text" id="abby-cust-phone" placeholder="+33 / +32…" />
+              </label>
+            </div>
+
+            <div id="abby-contact-name-fields" class="form-grid-2">
+              <label>
+                <span>Prénom (minuscules) *</span>
+                <input type="text" id="abby-cust-firstname" placeholder="ex. camille" />
+              </label>
+              <label>
+                <span>NOM DE FAMILLE (MAJUSCULES) *</span>
+                <input type="text" id="abby-cust-lastname" placeholder="ex. DUPONT" />
+              </label>
+            </div>
+
+            <div id="abby-org-name-field" hidden>
+              <label>
+                <span>Nom de l'établissement *</span>
+                <input type="text" id="abby-cust-orgname" placeholder="ex. Conservatoire municipal de …" />
+              </label>
+            </div>
+          </div>
+
+          <div id="abby-address-fields" style="display:grid;gap:8px;">
+            <p id="abby-addr-review-warn" class="abby-status-banner is-warn" style="margin:0;" hidden>
+              ⚠️ Vérifiez l'adresse de facturation exacte mentionnée par le client avant de créer la fiche.
+            </p>
+            <label>
+              <span>Adresse de facturation (rue et numéro) *</span>
+              <input type="text" id="abby-addr-line1" placeholder="ex. 12 rue de la Paix" />
+            </label>
+            <label>
+              <span>Complément d'adresse</span>
+              <input type="text" id="abby-addr-complement" placeholder="Bâtiment, étage, service facturation…" />
+            </label>
+            <div class="form-grid-3">
+              <label>
+                <span>Code postal *</span>
+                <input type="text" id="abby-addr-zip" placeholder="ex. 75002" />
+              </label>
+              <label>
+                <span>Ville *</span>
+                <input type="text" id="abby-addr-city" placeholder="ex. Paris" />
+              </label>
+              <label>
+                <span>Pays *</span>
+                <select id="abby-addr-country">
+                  <option value="FR">France (FR)</option>
+                  <option value="BE">Belgique (BE)</option>
+                  <option value="CH">Suisse (CH)</option>
+                  <option value="LU">Luxembourg (LU)</option>
+                  <option value="DE">Allemagne (DE)</option>
+                  <option value="NL">Pays-Bas (NL)</option>
+                  <option value="GB">Royaume-Uni (GB)</option>
+                  <option value="IT">Italie (IT)</option>
+                  <option value="ES">Espagne (ES)</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </div>
+      </fieldset>
+
       <label>
-        <span>Titre du devis (optionnel)</span>
+        <span>2. Titre du devis (optionnel)</span>
         <input type="text" id="abby-devis-title" placeholder="ex. Entretien et réglage harpe(s)" />
       </label>
       <div id="abby-lines-container" style="display:grid;gap:8px;"></div>
@@ -749,13 +854,13 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" crossorigin=""></script>
 
-  <script src="./js/api-client.js?v=5"></script>
-  <script src="./js/routing.js?v=5"></script>
-  <script src="./js/templates.js?v=5"></script>
-  <script src="./js/map.js?v=5"></script>
-  <script src="./js/planning.js?v=5"></script>
-  <script src="./js/messages.js?v=5"></script>
-  <script src="./js/finance.js?v=5"></script>
-  <script src="./js/app.js?v=5"></script>
+  <script src="./js/api-client.js?v=6"></script>
+  <script src="./js/routing.js?v=6"></script>
+  <script src="./js/templates.js?v=6"></script>
+  <script src="./js/map.js?v=6"></script>
+  <script src="./js/planning.js?v=6"></script>
+  <script src="./js/messages.js?v=6"></script>
+  <script src="./js/finance.js?v=6"></script>
+  <script src="./js/app.js?v=6"></script>
 </body>
 </html>

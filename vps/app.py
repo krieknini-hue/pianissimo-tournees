@@ -567,6 +567,9 @@ class AbbyDevisDraftBody(BaseModel):
     demande_id: str
     lines: list[dict[str, Any]] | None = None
     title: str | None = None
+    customer_id: str | None = None
+    customer_payload: dict[str, Any] | None = None
+    update_existing_billing_address: bool = False
 
 
 class AbbyDevisActionBody(BaseModel):
@@ -973,101 +976,581 @@ def abby_mcp_call(tool_name: str, arguments: dict[str, Any]) -> Any:
         return txt
 
 
-def _customer_matches(cust: dict[str, Any], target_norm: str, target_email: str, target_tel: str) -> bool:
-    c_email = (cust.get("email") or "").strip().lower()
-    if target_email and c_email and c_email == target_email:
-        return True
-    for fld in ("phone", "mobile"):
-        cd = normalize_phone_digits(str(cust.get(fld) or ""))
-        if target_tel and cd and cd == target_tel:
-            return True
-    disp = _strip_accents_lower(
-        cust.get("displayName")
-        or cust.get("name")
-        or f"{cust.get('firstname', '')} {cust.get('lastname', '')}"
-    )
-    if disp and target_norm and (disp in target_norm or target_norm in disp):
-        return True
-    tokens = [t for t in re.split(r"[\s()/-]+", target_norm) if len(t) >= 3]
-    return bool(tokens and disp and sum(1 for t in tokens if t in disp) >= min(2, len(tokens)))
+_ABBY_CUSTOMERS_CACHE: dict[str, Any] = {"ts": 0.0, "items": []}
+ABBY_CUSTOMERS_CACHE_TTL = 45.0
+
+ORG_CATEGORIES = ("conservatoire", "academie", "opera")
+ORG_KEYWORDS = (
+    "conservatoire",
+    "academie",
+    "ecole",
+    "opera",
+    "crr",
+    "crd",
+    "crc",
+    "orchestre",
+    "institut",
+)
+ORG_STOPWORDS = {
+    "conservatoire",
+    "academie",
+    "ecole",
+    "musique",
+    "opera",
+    "royal",
+    "royale",
+    "de",
+    "du",
+    "des",
+    "d",
+    "l",
+    "la",
+    "le",
+    "les",
+    "et",
+    "ville",
+    "entite",
+    "admin",
+    "crr",
+    "crd",
+    "crc",
+    "danse",
+    "regional",
+    "rayonnement",
+}
+CIVILITY_PREFIX_RE = re.compile(r"^(?:m\.|mr\.?|mme\.?|mlle\.?|madame|monsieur|dr\.?)\s+", re.IGNORECASE)
+TRAIL_ZIP_CITY_RE = re.compile(r",?\s*\b(\d{4,5})\s+([A-Za-zÀ-ÖØ-öø-ÿ'’\- ]+(?:\([^)]*\))?)$")
+ADDR_HINT_RE = re.compile(
+    r"(factur|adresse|\brue\b|\bavenue\b|\bboulevard\b|\bplace\b|\ball[ée]e\b|\bimpasse\b|\bchemin\b|\broute\b|\bstraat\b|\blaan\b|\bsquare\b|\bquai\b|\b\d{4,5}\s+[A-Za-zÀ-ÖØ-öø-ÿ]{2,})",
+    re.IGNORECASE,
+)
+EMAIL_VALID_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
-def find_or_create_abby_customer(dem: sqlite3.Row) -> tuple[str, str]:
-    clean_name = re.sub(r"\([^)]*\)", "", dem["nom"] or "").strip() or (dem["nom"] or "Client harpe")
-    target_norm = _strip_accents_lower(clean_name)
-    target_email = (dem["email"] or "").strip().lower()
-    target_tel = normalize_phone_digits(dem["telephone"] or "")
+def _invalidate_abby_customers_cache() -> None:
+    _ABBY_CUSTOMERS_CACHE["ts"] = 0.0
+    _ABBY_CUSTOMERS_CACHE["items"] = []
 
-    search_terms: list[str] = []
-    if clean_name:
-        search_terms.append(clean_name)
-    for tok in re.split(r"[\s/-]+", clean_name):
-        if len(tok) >= 3 and tok not in search_terms:
-            search_terms.append(tok)
-    if target_email and target_email not in search_terms:
-        search_terms.append(target_email)
 
-    for term in search_terms[:4]:
-        res = abby_mcp_call("get-customers", {"search": term, "limit": 25})
+def fetch_all_abby_customers(force_refresh: bool = False) -> list[dict[str, Any]]:
+    now = time.time()
+    cached = _ABBY_CUSTOMERS_CACHE.get("items") or []
+    if not force_refresh and cached and (now - float(_ABBY_CUSTOMERS_CACHE.get("ts") or 0.0)) < ABBY_CUSTOMERS_CACHE_TTL:
+        return cached
+
+    all_items: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    page = 1
+    while page <= 30:
+        res = abby_mcp_call("get-customers", {"page": page, "limit": 100})
         items = res.get("customers") or res.get("docs") or res.get("items") or (res if isinstance(res, list) else [])
         for c in items:
-            if isinstance(c, dict) and _customer_matches(c, target_norm, target_email, target_tel):
-                cid = str(c.get("id") or c.get("_id") or "")
-                cname = str(c.get("displayName") or c.get("name") or clean_name)
-                if cid:
-                    return cid, cname
+            if not isinstance(c, dict):
+                continue
+            cid = str(c.get("id") or c.get("_id") or "")
+            if cid and cid in seen_ids:
+                continue
+            if cid:
+                seen_ids.add(cid)
+            all_items.append(c)
+        if not isinstance(res, dict) or not res.get("hasNextPage"):
+            break
+        page += 1
 
-    # Création dans Abby si non trouvé
-    country = "FR"
-    pays_l = _strip_accents_lower(dem["pays"] or "")
-    if "belg" in pays_l:
-        country = "BE"
-    elif "suiss" in pays_l or "ch" == pays_l:
-        country = "CH"
+    _ABBY_CUSTOMERS_CACHE["ts"] = now
+    _ABBY_CUSTOMERS_CACHE["items"] = all_items
+    return all_items
 
-    addr = {
-        "address": (dem["adresse"] or dem["ville"] or "À préciser").strip(),
-        "city": (dem["ville"] or dem["secteur"] or "À préciser").strip(),
-        "zipCode": (dem["cp"] or "0000").strip(),
+
+def _split_person_name(raw_name: str) -> tuple[str, str]:
+    clean = re.sub(r"\([^)]*\)", "", raw_name or "").strip()
+    had_civility = False
+    while True:
+        m = CIVILITY_PREFIX_RE.match(clean)
+        if not m:
+            break
+        had_civility = True
+        clean = clean[m.end():].strip()
+
+    tokens = [t for t in clean.split() if t]
+    if not tokens:
+        return "", ""
+
+    upper_start = None
+    for i in range(len(tokens)):
+        tail = tokens[i:]
+        if all(any(ch.isalpha() for ch in t) and t == t.upper() for t in tail):
+            upper_start = i
+            break
+
+    if upper_start is not None:
+        if upper_start > 0:
+            firstname = " ".join(tokens[:upper_start])
+            lastname = " ".join(tokens[upper_start:])
+        elif had_civility or len(tokens) == 1:
+            firstname = ""
+            lastname = " ".join(tokens)
+        else:
+            firstname = tokens[0]
+            lastname = " ".join(tokens[1:])
+    elif len(tokens) >= 2:
+        firstname = tokens[0]
+        lastname = " ".join(tokens[1:])
+    else:
+        firstname = ""
+        lastname = tokens[0]
+
+    return firstname.strip().lower(), lastname.strip().upper()
+
+
+def _country_to_iso2(pays: str, cp: str = "", secteur: str = "") -> str:
+    p = _strip_accents_lower(pays or "")
+    mapping = {
+        "france": "FR",
+        "fr": "FR",
+        "belgique": "BE",
+        "belgium": "BE",
+        "belgie": "BE",
+        "be": "BE",
+        "suisse": "CH",
+        "switzerland": "CH",
+        "schweiz": "CH",
+        "ch": "CH",
+        "luxembourg": "LU",
+        "lu": "LU",
+        "allemagne": "DE",
+        "germany": "DE",
+        "de": "DE",
+        "pays-bas": "NL",
+        "pays bas": "NL",
+        "netherlands": "NL",
+        "nl": "NL",
+        "italie": "IT",
+        "italy": "IT",
+        "it": "IT",
+        "espagne": "ES",
+        "spain": "ES",
+        "es": "ES",
+        "royaume-uni": "GB",
+        "royaume uni": "GB",
+        "uk": "GB",
+        "gb": "GB",
+    }
+    if p in mapping:
+        return mapping[p]
+    for key, code in mapping.items():
+        if len(key) > 2 and key in p:
+            return code
+    sec = _strip_accents_lower(secteur or "")
+    if any(k in sec for k in ("bruxelles", "liege", "alost", "gand", "gent", "namur", "wallonie", "anvers", "charleroi", "mons", "louvain")):
+        return "BE"
+    if any(k in sec for k in ("suisse", "lausanne", "geneve", "neuchatel", "fribourg", "vevey", "montreux", "valais")):
+        return "CH"
+    return "FR"
+
+
+def _extract_client_address_hints(incoming_msgs: list[sqlite3.Row]) -> list[dict[str, str]]:
+    hints: list[dict[str, str]] = []
+    for m in incoming_msgs:
+        if (m["direction"] or "") != "entrant":
+            continue
+        content = (m["contenu"] or "").strip()
+        if not content:
+            continue
+        if ADDR_HINT_RE.search(content):
+            hints.append({
+                "date": (m["horodatage"] or "")[:10],
+                "canal": str(m["canal"] or ""),
+                "extrait": content[:320],
+            })
+            if len(hints) >= 3:
+                break
+    return hints
+
+
+def _extract_billing_address_proposal(dem: sqlite3.Row, incoming_msgs: list[sqlite3.Row]) -> dict[str, Any]:
+    raw_adresse = (dem["adresse"] or "").strip()
+    cp = (dem["cp"] or "").strip()
+    ville = (dem["ville"] or "").strip()
+    pays = (dem["pays"] or "").strip()
+
+    low_raw = raw_adresse.lower()
+    needs_review = (
+        not raw_adresse
+        or "à confirmer" in low_raw
+        or "a confirmer" in low_raw
+        or "à préciser" in low_raw
+        or "a preciser" in low_raw
+        or "à recevoir" in low_raw
+        or "a recevoir" in low_raw
+        or "adresse exacte" in low_raw
+        or " ou " in low_raw
+        or " + " in raw_adresse
+        or "pas chez" in low_raw
+        or "(carnet" in low_raw
+    )
+
+    clean_addr = raw_adresse
+    if re.search(r"\s+OU\s+", clean_addr):
+        clean_addr = re.split(r"\s+OU\s+", clean_addr, maxsplit=1)[0].strip()
+        needs_review = True
+    if " + " in clean_addr:
+        clean_addr = clean_addr.split(" + ", 1)[0].strip()
+        needs_review = True
+
+    clean_addr = re.sub(
+        r"\((?:carnet[^)]*|entr[ée]e[^)]*|au choix[^)]*|lieu[^)]*|adresse[^)]*|ou apport[^)]*|orw[^)]*)\)",
+        "",
+        clean_addr,
+        flags=re.IGNORECASE,
+    ).strip()
+
+    if any(
+        k in clean_addr.lower()
+        for k in ("à confirmer", "a confirmer", "à préciser", "a preciser", "à recevoir", "a recevoir", "adresse exacte")
+    ):
+        clean_addr = ""
+
+    if not clean_addr:
+        for m in incoming_msgs:
+            if (m["direction"] or "") != "entrant":
+                continue
+            found = re.search(r"(?:mon\s+)?adresse(?:\s+de\s+facturation)?\s*[:\-]\s*([^\n]+)", m["contenu"] or "", re.IGNORECASE)
+            if found:
+                clean_addr = found.group(1).strip(" .")
+                break
+
+    m_zip_city = TRAIL_ZIP_CITY_RE.search(clean_addr)
+    if m_zip_city:
+        parsed_zip, parsed_city = m_zip_city.group(1).strip(), m_zip_city.group(2).strip()
+        if not cp:
+            cp = parsed_zip
+        if not ville:
+            ville = parsed_city
+        clean_addr = clean_addr[:m_zip_city.start()].strip(" ,;")
+
+    return {
+        "address": clean_addr.strip(" ,;"),
+        "complement": "",
+        "zipCode": cp.strip(),
+        "city": ville.strip(),
+        "country": _country_to_iso2(pays, cp, dem["secteur"] or ""),
+        "raw_source": raw_adresse,
+        "needs_review": bool(needs_review or not clean_addr.strip() or not cp.strip() or not ville.strip()),
+    }
+
+
+def _norm_words(s: str) -> str:
+    txt = _strip_accents_lower(s).replace("-", " ").replace("’", "'").replace("'", " ")
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", txt)).strip()
+
+
+def _serialize_abby_customer(cust: dict[str, Any], score: int = 0, reason: str = "") -> dict[str, Any]:
+    b_addr = cust.get("billingAddress") or {}
+    return {
+        "id": str(cust.get("id") or cust.get("_id") or ""),
+        "displayName": str(cust.get("displayName") or cust.get("name") or "").strip(),
+        "firstname": str(cust.get("firstname") or "").strip(),
+        "lastname": str(cust.get("lastname") or "").strip(),
+        "name": str(cust.get("name") or "").strip(),
+        "isContact": bool(cust.get("isContact")),
+        "isOrganization": bool(cust.get("isOrganization")),
+        "contactId": str(cust.get("contactId") or ""),
+        "organizationId": str(cust.get("organizationId") or ""),
+        "phoneNumber": str(cust.get("phoneNumber") or "").strip(),
+        "billingAddress": {
+            "line1": str(b_addr.get("line1") or "").strip(),
+            "line2": str(b_addr.get("line2") or "").strip(),
+            "zipCode": str(b_addr.get("zipCode") or "").strip(),
+            "city": str(b_addr.get("city") or "").strip(),
+            "country": str(b_addr.get("country") or "").strip(),
+        },
+        "score": score,
+        "reason": reason,
+    }
+
+
+def _proposed_org_name(raw_name: str) -> str:
+    clean_base = re.sub(r"\([^)]*\)", "", raw_name or "").strip()
+    if any(kw in _norm_words(clean_base) for kw in ORG_KEYWORDS):
+        return clean_base
+    for paren in re.findall(r"\(([^)]*)\)", raw_name or ""):
+        if any(kw in _norm_words(paren) for kw in ORG_KEYWORDS):
+            return paren.strip()
+    return clean_base or (raw_name or "").strip()
+
+
+def _org_kind_family(norm_text: str) -> set[str]:
+    words = set(norm_text.split())
+    fams: set[str] = set()
+    if words & {"conservatoire", "crr", "crd", "crc"}:
+        fams.add("conservatoire")
+    if "academie" in words:
+        fams.add("academie")
+    if words & {"ecole", "institut"}:
+        fams.add("ecole")
+    if words & {"opera", "orchestre"}:
+        fams.add("opera")
+    return fams
+
+
+def find_abby_customer_candidates(
+    dem: sqlite3.Row,
+    customers: list[dict[str, Any]],
+) -> tuple[str, dict[str, Any] | None, list[dict[str, Any]]]:
+    raw_name = (dem["nom"] or "").strip()
+    target_email = (dem["email"] or "").strip().lower()
+    target_tel = normalize_phone_digits(dem["telephone"] or "")
+    target_tel9 = target_tel[-9:] if len(target_tel) >= 9 else ""
+    dem_cp = (dem["cp"] or "").strip()
+    dem_ville_norm = _norm_words(dem["ville"] or "")
+    is_org = (dem["categorie"] or "") in ORG_CATEGORIES
+
+    email_match_ids: set[str] = set()
+    if target_email and EMAIL_VALID_RE.match(target_email):
+        try:
+            eres = abby_mcp_call("get-customers", {"search": target_email, "limit": 10})
+            eitems = eres.get("customers") or eres.get("docs") or eres.get("items") or (eres if isinstance(eres, list) else [])
+            for ec in eitems:
+                if isinstance(ec, dict):
+                    ecid = str(ec.get("id") or ec.get("_id") or "")
+                    if ecid:
+                        email_match_ids.add(ecid)
+        except Exception:
+            pass
+
+    p_first, p_last = _split_person_name(raw_name)
+    p_first_n = _norm_words(p_first)
+    p_last_n = _norm_words(p_last)
+    org_target_n = _norm_words(_proposed_org_name(raw_name))
+    org_tokens = [t for t in org_target_n.split() if len(t) >= 3 and t not in ORG_STOPWORDS]
+
+    scored: list[dict[str, Any]] = []
+    for cust in customers:
+        if not isinstance(cust, dict):
+            continue
+        cid = str(cust.get("id") or cust.get("_id") or "")
+        if not cid:
+            continue
+
+        disp_n = _norm_words(str(cust.get("displayName") or cust.get("name") or ""))
+        c_first_n = _norm_words(str(cust.get("firstname") or ""))
+        c_last_n = _norm_words(str(cust.get("lastname") or ""))
+        c_tel = normalize_phone_digits(str(cust.get("phoneNumber") or ""))
+        c_tel9 = c_tel[-9:] if len(c_tel) >= 9 else ""
+        b_addr = cust.get("billingAddress") or {}
+        c_zip = str(b_addr.get("zipCode") or "").strip()
+        c_city_n = _norm_words(str(b_addr.get("city") or ""))
+
+        score = 0
+        reasons: list[str] = []
+
+        if cid in email_match_ids:
+            score = max(score, 100)
+            reasons.append("email identique")
+        if target_tel9 and c_tel9 and c_tel9 == target_tel9:
+            score = max(score, 95)
+            reasons.append("téléphone identique")
+
+        if not is_org:
+            full_1 = f"{p_first_n} {p_last_n}".strip()
+            full_2 = f"{p_last_n} {p_first_n}".strip()
+            if full_1 and (disp_n == full_1 or disp_n == full_2):
+                score = max(score, 92)
+                reasons.append("nom et prénom identiques")
+            elif p_last_n and (
+                c_last_n == p_last_n or bool(re.search(rf"\b{re.escape(p_last_n)}\b", disp_n))
+            ):
+                if p_first_n and (
+                    c_first_n == p_first_n or bool(re.search(rf"\b{re.escape(p_first_n)}\b", disp_n))
+                ):
+                    score = max(score, 88)
+                    reasons.append("nom et prénom concordants")
+                elif len(p_last_n) >= 4 and (c_last_n == p_last_n or (not c_last_n and p_last_n in disp_n.split())):
+                    if dem_cp and c_zip and dem_cp == c_zip:
+                        score = max(score, 82)
+                        reasons.append("nom + code postal identiques")
+                    else:
+                        score = max(score, 58)
+                        reasons.append("même nom de famille")
+        else:
+            disp_is_org = bool(cust.get("isOrganization")) or any(kw in disp_n.split() for kw in ORG_KEYWORDS)
+            t_fams = _org_kind_family(org_target_n)
+            d_fams = _org_kind_family(disp_n)
+            same_kind = bool(t_fams & d_fams)
+            kind_conflict = bool(t_fams and d_fams and not same_kind)
+
+            if org_target_n and disp_n == org_target_n:
+                score = max(score, 92)
+                reasons.append("établissement identique")
+            elif disp_is_org and org_tokens:
+                matched_toks = [t for t in org_tokens if re.search(rf"\b{re.escape(t)}\b", disp_n)]
+                if matched_toks and (
+                    len(matched_toks) == len(org_tokens)
+                    or (len(matched_toks) >= 1 and len(matched_toks[0]) >= 5)
+                ):
+                    same_loc = (dem_cp and c_zip and dem_cp == c_zip) or (
+                        dem_ville_norm and c_city_n and (c_city_n in dem_ville_norm or dem_ville_norm in c_city_n)
+                    )
+                    if kind_conflict:
+                        if same_loc:
+                            score = max(score, 55)
+                            reasons.append("autre établissement même ville")
+                    elif same_kind and same_loc:
+                        score = max(score, 90)
+                        reasons.append("établissement & ville concordants")
+                    elif same_loc and len(matched_toks) == len(org_tokens):
+                        score = max(score, 72)
+                        reasons.append("établissement proche à confirmer")
+                    elif same_kind:
+                        score = max(score, 68)
+                        reasons.append("établissement proche")
+
+            # Candidat contact individuel rattaché dans l'intitulé (ex. professeure / contact)
+            raw_base_has_org = any(kw in _norm_words(re.sub(r"\([^)]*\)", "", raw_name)) for kw in ORG_KEYWORDS)
+            if not cust.get("isOrganization") and not raw_base_has_org and p_last_n and len(p_last_n) >= 4 and (
+                c_last_n == p_last_n or bool(re.search(rf"\b{re.escape(p_last_n)}\b", disp_n))
+            ):
+                if p_first_n and (c_first_n == p_first_n or bool(re.search(rf"\b{re.escape(p_first_n)}\b", disp_n))):
+                    score = max(score, 60)
+                    reasons.append("contact référent existant")
+
+        if score >= 50:
+            scored.append(_serialize_abby_customer(cust, score=score, reason=", ".join(reasons)))
+
+    scored.sort(key=lambda x: (-x["score"], x["displayName"]))
+    top = scored[:6]
+    if top and top[0]["score"] >= 80:
+        return "found", top[0], top
+    if top:
+        return "candidates", None, top
+    return "not_found", None, []
+
+
+def _normalize_billing_address_input(addr: dict[str, Any]) -> dict[str, str]:
+    line1 = str(addr.get("address") or addr.get("line1") or "").strip()
+    complement = str(addr.get("complement") or addr.get("line2") or "").strip()
+    zip_code = str(addr.get("zipCode") or "").strip()
+    city = str(addr.get("city") or "").strip()
+    country = _country_to_iso2(str(addr.get("country") or "FR"))
+    if not line1 or not zip_code or not city or not country:
+        raise HTTPException(
+            status_code=400,
+            detail="Adresse de facturation incomplète (rue, code postal, ville et pays obligatoires).",
+        )
+    out = {
+        "address": line1,
+        "zipCode": zip_code,
+        "city": city,
         "country": country,
     }
-    is_org = (dem["categorie"] or "") in ("conservatoire", "academie", "opera")
-    if is_org:
+    if complement:
+        out["complement"] = complement
+    return out
+
+
+def _create_abby_customer_strict(dem: sqlite3.Row, cust_payload: dict[str, Any]) -> tuple[str, str]:
+    is_org_default = (dem["categorie"] or "") in ORG_CATEGORIES
+    kind = str(cust_payload.get("kind") or ("organization" if is_org_default else "contact")).strip()
+    billing_addr = _normalize_billing_address_input(cust_payload.get("billingAddress") or {})
+    email_val = str(cust_payload.get("email") or dem["email"] or "").strip()
+    phone_val = str(cust_payload.get("phone") or dem["telephone"] or "").strip()
+
+    if kind == "organization":
+        org_name = str(cust_payload.get("name") or _proposed_org_name(dem["nom"] or "")).strip()
+        if not org_name:
+            raise HTTPException(status_code=400, detail="Nom de l'établissement obligatoire pour créer la fiche Abby.")
+        notes = f"Tournée harpe ({dem['secteur']})"
+        if phone_val:
+            notes += f" · Tél : {phone_val}"
         payload: dict[str, Any] = {
-            "name": clean_name,
-            "billingAddress": addr,
-            "notes": f"Tournée harpe ({dem['secteur']})",
+            "name": org_name,
+            "billingAddress": billing_addr,
+            "notes": notes,
         }
-        if target_email:
-            payload["email"] = target_email
-        if target_tel:
-            payload["phone"] = f"+{target_tel}"
+        if email_val and EMAIL_VALID_RE.match(email_val):
+            payload["emails"] = [email_val]
         abby_mcp_call("create-organization", payload)
+        expected_norm = _norm_words(org_name)
     else:
-        parts = [p for p in clean_name.replace("Mme ", "").replace("M. ", "").split() if p]
-        firstname = parts[0] if len(parts) >= 2 else "Client"
-        lastname = " ".join(parts[1:]) if len(parts) >= 2 else (parts[0] if parts else "Harpe")
+        raw_first = str(cust_payload.get("firstname") or "").strip()
+        raw_last = str(cust_payload.get("lastname") or "").strip()
+        if not raw_first and not raw_last:
+            raw_first, raw_last = _split_person_name(dem["nom"] or "")
+        firstname = raw_first.lower()
+        lastname = raw_last.upper()
+        if not firstname or not lastname:
+            raise HTTPException(
+                status_code=400,
+                detail="Prénom (en minuscules) et NOM (en majuscules) obligatoires pour créer la fiche client dans Abby.",
+            )
         payload = {
             "firstname": firstname,
-            "lastname": lastname.upper(),
-            "billingAddress": addr,
+            "lastname": lastname,
+            "billingAddress": billing_addr,
             "notes": f"Tournée harpe ({dem['secteur']})",
         }
-        if target_email:
-            payload["email"] = target_email
-        if target_tel:
-            payload["phone"] = f"+{target_tel}"
+        if email_val and EMAIL_VALID_RE.match(email_val):
+            payload["emails"] = [email_val]
+        if phone_val:
+            payload["phone"] = phone_val
         abby_mcp_call("create-contact", payload)
+        expected_norm = _norm_words(f"{firstname} {lastname}")
 
-    res2 = abby_mcp_call("get-customers", {"search": clean_name.split()[0], "limit": 25})
-    items2 = res2.get("customers") or res2.get("docs") or res2.get("items") or (res2 if isinstance(res2, list) else [])
-    for c in items2:
-        if isinstance(c, dict) and _customer_matches(c, target_norm, target_email, target_tel):
+    _invalidate_abby_customers_cache()
+    refreshed = fetch_all_abby_customers(force_refresh=True)
+    target_zip = billing_addr["zipCode"]
+    fallback_match: tuple[str, str] | None = None
+    for c in refreshed:
+        disp_n = _norm_words(str(c.get("displayName") or c.get("name") or ""))
+        c_first_n = _norm_words(str(c.get("firstname") or ""))
+        c_last_n = _norm_words(str(c.get("lastname") or ""))
+        combined_n = f"{c_first_n} {c_last_n}".strip()
+        if disp_n == expected_norm or (combined_n and combined_n == expected_norm):
             cid = str(c.get("id") or c.get("_id") or "")
+            cname = str(c.get("displayName") or c.get("name") or "")
             if cid:
-                return cid, str(c.get("displayName") or c.get("name") or clean_name)
+                c_zip = str((c.get("billingAddress") or {}).get("zipCode") or "").strip()
+                if c_zip == target_zip:
+                    return cid, cname
+                fallback_match = (cid, cname)
+    if fallback_match:
+        return fallback_match
 
-    raise HTTPException(status_code=502, detail=f"Client créé/recherché dans Abby mais customerId introuvable pour {clean_name}.")
+    raise HTTPException(status_code=502, detail="Fiche créée dans Abby mais customerId introuvable après relecture.")
+
+
+def _update_existing_abby_billing_address(existing_cust: dict[str, Any], billing_addr_in: dict[str, Any]) -> None:
+    billing_addr = _normalize_billing_address_input(billing_addr_in)
+    if existing_cust.get("isContact") and existing_cust.get("contactId"):
+        firstname = str(existing_cust.get("firstname") or "").strip()
+        lastname = str(existing_cust.get("lastname") or "").strip()
+        if not firstname or not lastname:
+            raise HTTPException(status_code=400, detail="Impossible de mettre à jour ce contact Abby (prénom/nom manquants).")
+        abby_mcp_call(
+            "update-contact",
+            {
+                "contactId": str(existing_cust["contactId"]),
+                "firstname": firstname,
+                "lastname": lastname,
+                "billingAddress": billing_addr,
+            },
+        )
+    elif existing_cust.get("isOrganization") and existing_cust.get("organizationId"):
+        org_name = str(existing_cust.get("name") or existing_cust.get("displayName") or "").strip()
+        if not org_name:
+            raise HTTPException(status_code=400, detail="Impossible de mettre à jour cette organisation Abby (nom manquant).")
+        abby_mcp_call(
+            "update-organization",
+            {
+                "organizationId": str(existing_cust["organizationId"]),
+                "name": org_name,
+                "billingAddress": billing_addr,
+            },
+        )
+    else:
+        raise HTTPException(status_code=400, detail="Type de fiche Abby non modifiable automatiquement.")
+    _invalidate_abby_customers_cache()
 
 
 def _abby_download_pdf_bytes(billing_id: str) -> bytes:
@@ -1110,6 +1593,101 @@ def _send_gmail_with_pdf(dest: str, subject: str, body_text: str, pdf_bytes: byt
             os.environ["HERMES_HOME"] = prev_home
 
 
+def _build_proposed_customer(dem: sqlite3.Row, incoming_msgs: list[sqlite3.Row]) -> dict[str, Any]:
+    is_org = (dem["categorie"] or "") in ORG_CATEGORIES
+    firstname, lastname = _split_person_name(dem["nom"] or "")
+    return {
+        "kind": "organization" if is_org else "contact",
+        "firstname": firstname,
+        "lastname": lastname,
+        "name": _proposed_org_name(dem["nom"] or ""),
+        "email": (dem["email"] or "").strip(),
+        "phone": (dem["telephone"] or "").strip(),
+        "billingAddress": _extract_billing_address_proposal(dem, incoming_msgs),
+    }
+
+
+@app.get("/api/abby/customer/check")
+def check_abby_customer(demande_id: str, _auth: str = Depends(require_auth)):
+    with get_db() as conn:
+        dem = conn.execute("SELECT * FROM demandes WHERE id = ?", (demande_id,)).fetchone()
+        if not dem:
+            raise HTTPException(status_code=404, detail="Demande introuvable.")
+        incoming_msgs = conn.execute(
+            """SELECT canal, direction, horodatage, contenu
+               FROM messages_historique
+               WHERE demande_id = ? AND direction = 'entrant'
+               ORDER BY horodatage DESC""",
+            (demande_id,),
+        ).fetchall()
+
+    customers = fetch_all_abby_customers()
+    status, matched, candidates = find_abby_customer_candidates(dem, customers)
+    return {
+        "ok": True,
+        "status": status,
+        "matched": matched,
+        "candidates": candidates,
+        "proposed_customer": _build_proposed_customer(dem, incoming_msgs),
+        "client_address_hints": _extract_client_address_hints(incoming_msgs),
+        "total_abby_customers": len(customers),
+    }
+
+
+@app.get("/api/abby/customers/search")
+def search_abby_customers(q: str = "", _auth: str = Depends(require_auth)):
+    query = (q or "").strip()
+    if not query:
+        return {"ok": True, "items": []}
+
+    customers = fetch_all_abby_customers()
+    q_norm = _norm_words(query)
+    q_digits = normalize_phone_digits(query)
+    results: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    if "@" in query:
+        try:
+            eres = abby_mcp_call("get-customers", {"search": query, "limit": 15})
+            eitems = eres.get("customers") or eres.get("docs") or eres.get("items") or (eres if isinstance(eres, list) else [])
+            for ec in eitems:
+                if isinstance(ec, dict):
+                    item = _serialize_abby_customer(ec, score=100, reason="email")
+                    if item["id"] and item["id"] not in seen_ids:
+                        seen_ids.add(item["id"])
+                        results.append(item)
+        except Exception:
+            pass
+
+    for c in customers:
+        if not isinstance(c, dict):
+            continue
+        cid = str(c.get("id") or c.get("_id") or "")
+        if not cid or cid in seen_ids:
+            continue
+        b_addr = c.get("billingAddress") or {}
+        hay = _norm_words(
+            " ".join(
+                [
+                    str(c.get("displayName") or ""),
+                    str(c.get("firstname") or ""),
+                    str(c.get("lastname") or ""),
+                    str(c.get("name") or ""),
+                    str(b_addr.get("city") or ""),
+                    str(b_addr.get("zipCode") or ""),
+                ]
+            )
+        )
+        c_tel = normalize_phone_digits(str(c.get("phoneNumber") or ""))
+        if (q_norm and q_norm in hay) or (q_digits and c_tel and q_digits in c_tel):
+            seen_ids.add(cid)
+            results.append(_serialize_abby_customer(c, score=80, reason="recherche manuelle"))
+            if len(results) >= 15:
+                break
+
+    return {"ok": True, "items": results[:15]}
+
+
 @app.post("/api/abby/devis/draft")
 def create_abby_devis_draft(body: AbbyDevisDraftBody, _auth: str = Depends(require_auth)):
     with get_db() as conn:
@@ -1118,6 +1696,13 @@ def create_abby_devis_draft(body: AbbyDevisDraftBody, _auth: str = Depends(requi
             raise HTTPException(status_code=404, detail="Demande introuvable.")
         tour = conn.execute("SELECT * FROM tournees WHERE id = ?", (dem["tournee_id"],)).fetchone()
         bareme = {**DEFAULT_BAREME, **(json.loads(tour["bareme_json"]) if tour else {})}
+        incoming_msgs = conn.execute(
+            """SELECT canal, direction, horodatage, contenu
+               FROM messages_historique
+               WHERE demande_id = ? AND direction = 'entrant'
+               ORDER BY horodatage DESC""",
+            (body.demande_id,),
+        ).fetchall()
 
         lines_in = body.lines or []
         abby_lines: list[dict[str, Any]] = []
@@ -1189,7 +1774,56 @@ def create_abby_devis_draft(body: AbbyDevisDraftBody, _auth: str = Depends(requi
         if not abby_lines:
             raise HTTPException(status_code=400, detail="Aucune ligne de devis valide (> 0 €).")
 
-        customer_id, customer_name = find_or_create_abby_customer(dem)
+        customers = fetch_all_abby_customers()
+        customer_created = False
+        selected_cid = (body.customer_id or "").strip()
+        cust_payload = body.customer_payload or {}
+
+        if selected_cid:
+            existing_cust = next(
+                (c for c in customers if str(c.get("id") or c.get("_id") or "") == selected_cid),
+                None,
+            )
+            if not existing_cust:
+                customers = fetch_all_abby_customers(force_refresh=True)
+                existing_cust = next(
+                    (c for c in customers if str(c.get("id") or c.get("_id") or "") == selected_cid),
+                    None,
+                )
+            if not existing_cust:
+                raise HTTPException(status_code=404, detail="Fiche client Abby sélectionnée introuvable.")
+            if body.update_existing_billing_address and cust_payload.get("billingAddress"):
+                _update_existing_abby_billing_address(existing_cust, cust_payload["billingAddress"])
+            customer_id = selected_cid
+            customer_name = str(existing_cust.get("displayName") or existing_cust.get("name") or dem["nom"])
+        else:
+            force_create = bool(cust_payload.get("force_create"))
+            if not force_create:
+                status, matched, _ = find_abby_customer_candidates(dem, customers)
+                if status == "found" and matched and matched.get("id"):
+                    customer_id = str(matched["id"])
+                    customer_name = str(matched.get("displayName") or dem["nom"])
+                else:
+                    proposed = _build_proposed_customer(dem, incoming_msgs)
+                    effective_payload = {**proposed, **cust_payload}
+                    if cust_payload.get("billingAddress"):
+                        effective_payload["billingAddress"] = {
+                            **proposed["billingAddress"],
+                            **cust_payload["billingAddress"],
+                        }
+                    customer_id, customer_name = _create_abby_customer_strict(dem, effective_payload)
+                    customer_created = True
+            else:
+                proposed = _build_proposed_customer(dem, incoming_msgs)
+                effective_payload = {**proposed, **cust_payload}
+                if cust_payload.get("billingAddress"):
+                    effective_payload["billingAddress"] = {
+                        **proposed["billingAddress"],
+                        **cust_payload["billingAddress"],
+                    }
+                customer_id, customer_name = _create_abby_customer_strict(dem, effective_payload)
+                customer_created = True
+
         create_payload: dict[str, Any] = {
             "customerId": customer_id,
             "estimateType": "estimate",
@@ -1221,7 +1855,9 @@ def create_abby_devis_draft(body: AbbyDevisDraftBody, _auth: str = Depends(requi
         "ok": True,
         "billing_id": billing_id,
         "ref": ref,
+        "customer_id": customer_id,
         "customer_name": customer_name,
+        "customer_created": customer_created,
         "pdf_url": f"/api/abby/devis/{billing_id}/pdf",
     }
 

@@ -26,6 +26,11 @@ Application PWA autonome de gestion des tournées harpe pour **Pianissimo** (Ant
 
 ## Historique des versions
 
+### v6 (25/11/2026) — Vérification client Abby & adresse de facturation contrôlée
+- **Vérification en première intention dans Abby** (`GET /api/abby/customer/check` + `GET /api/abby/customers/search`) : contrôle systématique des fiches existantes avant création de devis (zéro doublon), avec recherche manuelle dans Abby directement depuis la modale.
+- **Création contrôlée si inexistant & casse stricte** : pour les particuliers, saisie forcée côté UI et backend du **prénom en minuscules** et du **NOM DE FAMILLE en MAJUSCULES** ; correction du format MCP Abby (`emails: [...]`, schéma organisation sans `phone`).
+- **Adresse de facturation fidèle au client** : extraction nettoyée (sans notes internes ni duplication code postal/ville sur le PDF), affichage des extraits de messages entrants du client mentionnant une adresse ou la facturation, et mise à jour optionnelle de l'adresse d'une fiche Abby existante avant génération du brouillon.
+
 ### v5 (25/11/2026) — Ergonomie terrain, Reprises, Barème éditable, Abby & Google Agenda
 - **Durées lisibles `XhYY` / `XX min`** partout à la place des heures décimales (`2h30`, `1h`, `45 min`). Suppression des libellés « Fourchette » ambigus.
 - **Nouveau type « Reprise réglage (harpe à pédales) »** (`nb_reprise`, `1h` par défaut) pris en compte sur les fiches, les KPI, les anneaux carte (`teal`), le planning et le pilotage CA.
