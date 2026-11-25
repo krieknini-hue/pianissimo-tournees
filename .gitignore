@@ -7,3 +7,5 @@ node_modules/
 *.xlsx
 *.pdf
 tmp/
+__pycache__/
+*.pyc
