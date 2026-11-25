@@ -41,7 +41,7 @@ Application PWA autonome de gestion des tournées harpe pour **Pianissimo** (Ant
 - Migration complète de GitHub Pages + Supabase vers `hermes-vps` (FastAPI + SQLite WAL + Traefik HTTPS), conservation des 3 tournées, 22 demandes, 137 messages, 22 brouillons et 13 anomalies.
 - Authentification par code d'équipe hashé `scrypt` + cookie `HttpOnly; Secure; SameSite=lax` + blocage anti-brute-force.
 - Refonte responsive mobile (`320 px+`, zéro débordement horizontal, zoom tactile autorisé, navigation 5 onglets + stepper `▲ / ▼`, mode maître-détail sur l'onglet Messages).
-- Changement du code d'accès équipe (`harpe101225`).
+- Changement du code d'accès équipe (hash `scrypt` dans `/srv/tournees-harpe/.env`).
 
 ### v2 – v3 (2026) — Navigation mobile plein écran & barème actualisé
 - Temps standards mis à jour : Concert `2h30` (`320 €`), Étude `2h` (`280 €`), Celtique `45 min` (`150 €`).
