@@ -476,7 +476,7 @@
 
   function recalcHarpFields() {
     const t = currentTournee();
-    const b = t?.bareme || { concert_eur: 320, concert_h: 3, etude_eur: 280, etude_h: 3, celtique_eur: 150, celtique_h: 1.5 };
+    const b = t?.bareme || { concert_eur: 320, concert_h: 2.5, etude_eur: 280, etude_h: 2, celtique_eur: 150, celtique_h: 0.75 };
     const c = Number(document.getElementById("dem-concert").value || 0);
     const e = Number(document.getElementById("dem-etude").value || 0);
     const cel = Number(document.getElementById("dem-celtique").value || 0);
@@ -801,6 +801,7 @@
           date_fin: document.getElementById("tour-fin").value,
           statut: document.getElementById("tour-statut").value,
           nb_luthiers: Number(document.getElementById("tour-luthiers").value || 2),
+          bareme: { concert_eur: 320, concert_h: 2.5, etude_eur: 280, etude_h: 2, celtique_eur: 150, celtique_h: 0.75 },
           notes: document.getElementById("tour-notes").value.trim(),
         })
         .select()

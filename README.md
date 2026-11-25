@@ -8,7 +8,7 @@ Application web (PWA) de pilotage des tournées d'entretien et réglage de harpe
    - Vue **Pôles géographiques** (pastilles chiffrées par zone avec anneau couleur Concert / Étude / Celtique) et vue **Clients** (clusters Leaflet).
    - Suivi des anomalies, conflits et fiches clients complètes.
 2. **Planning & Trajets OSRM** :
-   - Organisation jour par jour, calcul des durées par instrument (Concert 3h, Étude 3h, Celtique 1h30) et temps de conduite réels via OSRM.
+   - Organisation jour par jour, calcul des durées par instrument (Concert 2h30, Étude 2h, Celtique 45 min) et temps de conduite réels via OSRM.
    - Mode **1 ou 2 luthiers**, épinglage d'horaires contraints, optimisation automatique de l'ordre des arrêts, lien Google Maps multi-étapes et impression A4.
 3. **Messages & WhatsApp** :
    - Historique des échanges par client, personnalisation des messages et ouverture directe `wa.me` / `mailto:` (validation humaine obligatoire, zéro envoi autonome).

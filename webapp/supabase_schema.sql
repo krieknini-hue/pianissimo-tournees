@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS public.tournees (
   statut text NOT NULL DEFAULT 'en_preparation'
     CHECK (statut IN ('a_venir', 'en_preparation', 'en_cours', 'terminee')),
   nb_luthiers integer NOT NULL DEFAULT 2 CHECK (nb_luthiers BETWEEN 1 AND 4),
-  bareme jsonb NOT NULL DEFAULT '{"concert_eur":320,"concert_h":3,"etude_eur":280,"etude_h":3,"celtique_eur":150,"celtique_h":1.5}'::jsonb,
+  bareme jsonb NOT NULL DEFAULT '{"concert_eur":320,"concert_h":2.5,"etude_eur":280,"etude_h":2,"celtique_eur":150,"celtique_h":0.75}'::jsonb,
   frais_estimes jsonb NOT NULL DEFAULT '{"location_voiture":300,"carburant_peages":180,"train_approche":80,"hotel_nuit":90,"nb_nuits":5}'::jsonb,
   notes text NOT NULL DEFAULT '',
   created_at timestamptz NOT NULL DEFAULT now(),
