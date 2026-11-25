@@ -1,8 +1,8 @@
-const CACHE_NAME = "pianissimo-tournees-v1";
+const CACHE_NAME = "pianissimo-tournees-v2";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
-  "./css/app.css",
+  "./css/app.css?v=2",
   "./js/config.js",
   "./js/supabase-client.js",
   "./js/routing.js",
