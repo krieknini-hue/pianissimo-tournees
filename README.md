@@ -18,15 +18,17 @@ Application web (PWA) de pilotage des tournées d'entretien et réglage de harpe
 
 ## Architecture
 
-- **Frontend statique (GitHub Pages)** : `webapp/public/` (HTML5, CSS3, Vanilla JS, Leaflet, `@supabase/supabase-js` v2).
-- **Backend & Temps réel (Supabase)** :
-  - PostgreSQL avec **Row Level Security strict** (`TO authenticated`) — aucune donnée personnelle n'est stockée dans ce dépôt.
-  - Edge Function `supabase/functions/tournees-auth/index.ts` pour l'authentification par code d'équipe partagé.
-  - Synchronisation temps réel via Supabase Realtime.
+- **Frontend statique (PWA responsive)** : `webapp/public/` (HTML5, CSS3 mobile-first 320px+, Vanilla JS, Leaflet, OSRM).
+- **Backend autonome sur VPS (`vps/app.py`)** :
+  - **FastAPI + Uvicorn + SQLite WAL** derrière **Traefik HTTPS** (HSTS, `X-Frame-Options: DENY`, rate-limiting).
+  - Authentification par code d'équipe hashé (`scrypt`) + cookie signé HMAC (`HttpOnly; Secure; SameSite=Lax`) et protection anti-brute-force par IP.
+  - Synchronisation automatique quasi temps réel (45 s – 3 min, 0 token LLM) depuis la base SMS/WhatsApp unifiée et Gmail pro, avec diffusion temps réel vers les navigateurs via **SSE (`/api/events`)**.
+  - Envoi direct WhatsApp (`wacli`) et Email (`google_api.py`) sur **validation humaine explicite**.
+  - Aucune donnée client ni aucun secret n'est stocké dans ce dépôt.
 
 ## Lancement en local
 
 ```bash
-node webapp/server.js
-# Ouvrir http://localhost:3010
+cd vps
+uvicorn app:app --reload --port 8485
 ```

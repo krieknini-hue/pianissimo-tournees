@@ -1,8 +1,9 @@
-// Module Messages & WhatsApp : vue Maître -> Détail plein écran sur smartphone + 2 colonnes sur ordinateur
+// Module Messages & WhatsApp : Maître -> Détail plein écran, sync SMS/WA/Mail et envoi pro avec confirmation
 (() => {
   let selectedId = null;
   let currentData = { tournee: null, demandes: [], messages: [], brouillons: [] };
   let callbacks = {};
+  let pendingSend = null;
 
   function escapeHtml(s) {
     return String(s || "")
@@ -76,7 +77,7 @@
           <li>
             <button type="button" class="msg-client-btn ${isSel}" data-id="${d.id}">
               <div class="msg-client-row">
-                <strong>${escapeHtml(d.nom)}</strong>
+                <strong style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(d.nom)}</strong>
                 <span class="badge ${cls}">${label}</span>
               </div>
               <div class="msg-client-row" style="font-size:0.76rem;color:#6B6257;">
@@ -108,18 +109,19 @@
     document.getElementById("composer-subject-row").hidden = canal !== "Email";
 
     const waBtn = document.getElementById("btn-open-wa");
-    const mailBtn = document.getElementById("btn-open-mail");
+    const sendDirectBtn = document.getElementById("btn-send-direct");
+    const hasDestination = canal === "WhatsApp" ? Boolean(demande.telephone) : Boolean(demande.email);
+
     if (canal === "WhatsApp") {
       const waUrl = window.PianissimoTemplates.buildWhatsAppUrl(demande.telephone, text);
       waBtn.hidden = !waUrl;
       waBtn.href = waUrl || "#";
-      mailBtn.hidden = true;
+      sendDirectBtn.textContent = "Envoyer WhatsApp (pro Anthony)";
     } else {
-      const mailUrl = window.PianissimoTemplates.buildMailtoUrl(demande.email, objet, text);
-      mailBtn.hidden = !mailUrl;
-      mailBtn.href = mailUrl || "#";
       waBtn.hidden = true;
+      sendDirectBtn.textContent = "Envoyer Email (pro Anthony)";
     }
+    sendDirectBtn.disabled = !hasDestination || !text.trim();
 
     const guards = window.PianissimoTemplates.evaluateGuards(text, demande);
     const guardEl = document.getElementById("composer-guards");
@@ -233,6 +235,19 @@
     document.getElementById("msg-filter-statut")?.addEventListener("change", renderSidebar);
     document.getElementById("msg-filter-canal")?.addEventListener("change", renderSidebar);
 
+    document.getElementById("btn-sync-messages")?.addEventListener("click", async () => {
+      if (!callbacks.syncNow) return;
+      const btn = document.getElementById("btn-sync-messages");
+      btn.disabled = true;
+      btn.textContent = "Synchro...";
+      try {
+        await callbacks.syncNow();
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "↻ Actualiser";
+      }
+    });
+
     document.getElementById("btn-msg-back-list")?.addEventListener("click", () => {
       setMobileThreadOpen(false);
     });
@@ -284,14 +299,43 @@
       });
     });
 
-    document.getElementById("btn-mark-sent")?.addEventListener("click", async () => {
+    document.getElementById("btn-send-direct")?.addEventListener("click", () => {
       const demande = currentData.demandes.find((d) => d.id === selectedId);
-      if (!demande || !callbacks.markSent) return;
-      await callbacks.markSent(demande, {
-        canal: document.getElementById("composer-canal").value,
-        objet: document.getElementById("composer-objet").value,
-        texte_final: document.getElementById("composer-textarea").value,
-      });
+      if (!demande) return;
+      const canal = document.getElementById("composer-canal").value;
+      const objet = document.getElementById("composer-objet").value;
+      const texte = document.getElementById("composer-textarea").value;
+
+      const guards = window.PianissimoTemplates.evaluateGuards(texte, demande);
+      if (guards.some((g) => g.code === "MARIE_PHONE")) {
+        callbacks.toast && callbacks.toast("Corrigez le numéro personnel détecté avant d'envoyer.", true);
+        return;
+      }
+
+      pendingSend = { demande, canal, objet, texte };
+      const dest = canal === "WhatsApp" ? demande.telephone : demande.email;
+      document.getElementById("confirm-send-target").textContent = `${canal} → ${demande.nom} (${dest})`;
+      document.getElementById("confirm-send-preview").textContent = (canal === "Email" && objet ? `Objet : ${objet}\n\n` : "") + texte;
+      document.getElementById("dialog-confirm-send").showModal();
+    });
+
+    document.getElementById("btn-confirm-send-exec")?.addEventListener("click", async () => {
+      if (!pendingSend || !callbacks.sendDirect) return;
+      const btn = document.getElementById("btn-confirm-send-exec");
+      btn.disabled = true;
+      btn.textContent = "Envoi en cours...";
+      try {
+        await callbacks.sendDirect(pendingSend.demande, {
+          canal: pendingSend.canal,
+          objet: pendingSend.objet,
+          texte_final: pendingSend.texte,
+        });
+        document.getElementById("dialog-confirm-send").close();
+        pendingSend = null;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Confirmer et envoyer";
+      }
     });
 
     document.getElementById("msg-log-form")?.addEventListener("submit", async (e) => {

@@ -1,4 +1,4 @@
-// Orchestrateur principal : Hub tournées, atelier plein écran 5 pages, stepper ▲/▼, CRUD Supabase
+// Orchestrateur principal : Hub tournées, atelier plein écran 5 pages, stepper ▲/▼, API VPS
 (() => {
   const TAB_ORDER = ["tab-demandes", "tab-carte", "tab-planning", "tab-messages", "tab-finance"];
 
@@ -275,7 +275,7 @@
           .map(
             (a) => `
           <div class="anomaly-item ${a.resolue ? "is-resolved" : ""}">
-            <div style="flex:1 1 280px;">
+            <div style="flex:1 1 240px;">
               <span class="badge ${a.severite === "critique" ? "badge-danger" : a.severite === "haute" ? "badge-warn" : "badge-neutral"}">${escapeHtml(a.severite.toUpperCase())}</span>
               <strong>${escapeHtml(a.titre)}</strong>
               <p>${escapeHtml(a.description)}</p>
@@ -293,13 +293,12 @@
 
     anomList.querySelectorAll(".js-anom-toggle").forEach((btn) => {
       btn.addEventListener("click", async () => {
-        const resolue = btn.dataset.resolue !== "true";
-        const { error } = await window.PianissimoDB.client
-          .from("anomalies")
-          .update({ resolue })
-          .eq("id", btn.dataset.id);
-        if (error) return toast(error.message, true);
-        await reloadCurrentTournee();
+        try {
+          await window.PianissimoDB.toggleAnomalie(btn.dataset.id, btn.dataset.resolue !== "true");
+          await reloadCurrentTournee();
+        } catch (err) {
+          toast(err.message, true);
+        }
       });
     });
 
@@ -407,21 +406,21 @@
         togglePin: async (id) => {
           const d = state.demandes.find((x) => x.id === id);
           if (!d) return;
-          const { error } = await window.PianissimoDB.client
-            .from("demandes")
-            .update({ creneau_epingle: !d.creneau_epingle })
-            .eq("id", id);
-          if (error) return toast(error.message, true);
-          await reloadCurrentTournee();
+          try {
+            await window.PianissimoDB.updateDemande(id, { creneau_epingle: !d.creneau_epingle });
+            await reloadCurrentTournee();
+          } catch (err) {
+            toast(err.message, true);
+          }
         },
         changeDay: async (id, jourDate) => {
-          const { error } = await window.PianissimoDB.client
-            .from("demandes")
-            .update({ jour_date: jourDate, ordre_jour: jourDate ? 50 : 99 })
-            .eq("id", id);
-          if (error) return toast(error.message, true);
-          toast("Journée mise à jour.");
-          await reloadCurrentTournee();
+          try {
+            await window.PianissimoDB.updateDemande(id, { jour_date: jourDate, ordre_jour: jourDate ? 50 : 99 });
+            toast("Journée mise à jour.");
+            await reloadCurrentTournee();
+          } catch (err) {
+            toast(err.message, true);
+          }
         },
         moveStop: async (dayIso, id, delta) => {
           const arr = state.demandes
@@ -434,17 +433,13 @@
           const [item] = copy.splice(idx, 1);
           copy.splice(targetIdx, 0, item);
           await Promise.all(
-            copy.map((s, order) =>
-              window.PianissimoDB.client.from("demandes").update({ ordre_jour: order + 1 }).eq("id", s.id),
-            ),
+            copy.map((s, order) => window.PianissimoDB.updateDemande(s.id, { ordre_jour: order + 1 })),
           );
           await reloadCurrentTournee();
         },
         applyOrder: async (_dayIso, orderedIds) => {
           await Promise.all(
-            orderedIds.map((id, order) =>
-              window.PianissimoDB.client.from("demandes").update({ ordre_jour: order + 1 }).eq("id", id),
-            ),
+            orderedIds.map((id, order) => window.PianissimoDB.updateDemande(id, { ordre_jour: order + 1 })),
           );
           toast("Ordre optimisé appliqué.");
           await reloadCurrentTournee();
@@ -458,24 +453,24 @@
       tournee: currentTournee(),
       demandes: state.demandes,
       onSaveFrais: async (frais_estimes) => {
-        const { error } = await window.PianissimoDB.client
-          .from("tournees")
-          .update({ frais_estimes })
-          .eq("id", state.currentTourneeId);
-        if (error) return toast(error.message, true);
-        const t = currentTournee();
-        if (t) t.frais_estimes = frais_estimes;
-        toast("Frais de tournée enregistrés.");
-        renderFinance();
+        try {
+          await window.PianissimoDB.updateTournee(state.currentTourneeId, { frais_estimes });
+          const t = currentTournee();
+          if (t) t.frais_estimes = frais_estimes;
+          toast("Frais de tournée enregistrés.");
+          renderFinance();
+        } catch (err) {
+          toast(err.message, true);
+        }
       },
       onChangeDevis: async (id, devis_statut) => {
-        const { error } = await window.PianissimoDB.client
-          .from("demandes")
-          .update({ devis_statut })
-          .eq("id", id);
-        if (error) return toast(error.message, true);
-        toast("Statut devis mis à jour.");
-        await reloadCurrentTournee();
+        try {
+          await window.PianissimoDB.updateDemande(id, { devis_statut });
+          toast("Statut devis mis à jour.");
+          await reloadCurrentTournee();
+        } catch (err) {
+          toast(err.message, true);
+        }
       },
       onOpenDemande: openDemandeDialog,
     });
@@ -590,7 +585,7 @@
       clearTimeout(state.realtimeTimer);
       state.realtimeTimer = setTimeout(() => {
         reloadCurrentTournee(false);
-      }, 350);
+      }, 300);
     });
   }
 
@@ -625,69 +620,61 @@
     window.PianissimoMessages.initEvents({
       openDemande: openDemandeDialog,
       toast,
-      saveDraft: async (demande, payload) => {
-        const { error } = await window.PianissimoDB.client
-          .from("brouillons_messages")
-          .upsert(
-            {
-              demande_id: demande.id,
-              tournee_id: demande.tournee_id,
-              canal: payload.canal,
-              objet: payload.objet,
-              texte_final: payload.texte_final,
-              statut: payload.statut || "brouillon",
-            },
-            { onConflict: "demande_id,canal" },
-          );
-        if (error) return toast(error.message, true);
-        toast("Brouillon enregistré.");
-        await reloadCurrentTournee();
+      syncNow: async () => {
+        try {
+          const res = await window.PianissimoDB.syncMessagesNow();
+          await reloadCurrentTournee();
+          toast(`Synchro terminée (${res.added || 0} nouveau(x) message(s)).`);
+        } catch (err) {
+          toast(err.message, true);
+        }
       },
-      markSent: async (demande, payload) => {
-        const nowIso = new Date().toISOString();
-        const { error: errB } = await window.PianissimoDB.client
-          .from("brouillons_messages")
-          .upsert(
-            {
-              demande_id: demande.id,
-              tournee_id: demande.tournee_id,
-              canal: payload.canal,
-              objet: payload.objet,
-              texte_final: payload.texte_final,
-              statut: "envoye",
-              envoye_le: nowIso,
-            },
-            { onConflict: "demande_id,canal" },
-          );
-        if (errB) return toast(errB.message, true);
-
-        const { error: errM } = await window.PianissimoDB.client.from("messages_historique").insert({
-          demande_id: demande.id,
-          tournee_id: demande.tournee_id,
-          canal: payload.canal,
-          direction: "sortant",
-          horodatage: nowIso,
-          contenu: payload.texte_final,
-          auteur: "Pianissimo (validé)",
-        });
-        if (errM) return toast(errM.message, true);
-
-        toast("Message consigné comme envoyé.");
-        await reloadCurrentTournee();
+      saveDraft: async (demande, payload) => {
+        try {
+          await window.PianissimoDB.saveBrouillon({
+            demande_id: demande.id,
+            tournee_id: demande.tournee_id,
+            canal: payload.canal,
+            objet: payload.objet,
+            texte_final: payload.texte_final,
+            statut: payload.statut || "brouillon",
+          });
+          toast("Brouillon enregistré.");
+          await reloadCurrentTournee();
+        } catch (err) {
+          toast(err.message, true);
+        }
+      },
+      sendDirect: async (demande, payload) => {
+        try {
+          await window.PianissimoDB.sendMessageDirect({
+            demande_id: demande.id,
+            canal: payload.canal,
+            objet: payload.objet,
+            texte: payload.texte_final,
+          });
+          toast(`Message envoyé via ${payload.canal} (compte pro Anthony).`);
+          await reloadCurrentTournee();
+        } catch (err) {
+          toast(err.message, true);
+          throw err;
+        }
       },
       logMessage: async (demande, payload) => {
-        const { error } = await window.PianissimoDB.client.from("messages_historique").insert({
-          demande_id: demande.id,
-          tournee_id: demande.tournee_id,
-          canal: payload.canal,
-          direction: payload.direction,
-          horodatage: new Date().toISOString(),
-          contenu: payload.contenu,
-          auteur: payload.direction === "entrant" ? demande.nom : "Équipe Pianissimo",
-        });
-        if (error) return toast(error.message, true);
-        toast("Échange ajouté à l'historique.");
-        await reloadCurrentTournee();
+        try {
+          await window.PianissimoDB.logMessage({
+            demande_id: demande.id,
+            tournee_id: demande.tournee_id,
+            canal: payload.canal,
+            direction: payload.direction,
+            contenu: payload.contenu,
+            auteur: payload.direction === "entrant" ? demande.nom : "Équipe Pianissimo",
+          });
+          toast("Échange ajouté à l'historique.");
+          await reloadCurrentTournee();
+        } catch (err) {
+          toast(err.message, true);
+        }
       },
     });
 
@@ -753,14 +740,14 @@
     // Planning controls
     document.getElementById("planning-luthiers").addEventListener("change", async (e) => {
       const nb_luthiers = Number(e.target.value || 2);
-      const { error } = await window.PianissimoDB.client
-        .from("tournees")
-        .update({ nb_luthiers })
-        .eq("id", state.currentTourneeId);
-      if (error) return toast(error.message, true);
-      const t = currentTournee();
-      if (t) t.nb_luthiers = nb_luthiers;
-      renderPlanning();
+      try {
+        await window.PianissimoDB.updateTournee(state.currentTourneeId, { nb_luthiers });
+        const t = currentTournee();
+        if (t) t.nb_luthiers = nb_luthiers;
+        renderPlanning();
+      } catch (err) {
+        toast(err.message, true);
+      }
     });
 
     document.getElementById("planning-start-time").addEventListener("change", (e) => {
@@ -844,33 +831,39 @@
         action_requise: document.getElementById("dem-action").value.trim(),
       };
 
-      const op = id
-        ? window.PianissimoDB.client.from("demandes").update(row).eq("id", id)
-        : window.PianissimoDB.client.from("demandes").insert(row);
-      const { error } = await op;
-      if (error) return toast(error.message, true);
-      document.getElementById("dialog-demande").close();
-      toast(id ? "Fiche mise à jour." : "Nouvelle demande créée.");
-      await reloadCurrentTournee();
+      try {
+        if (id) {
+          await window.PianissimoDB.updateDemande(id, row);
+        } else {
+          await window.PianissimoDB.createDemande(row);
+        }
+        document.getElementById("dialog-demande").close();
+        toast(id ? "Fiche mise à jour." : "Nouvelle demande créée.");
+        await reloadCurrentTournee();
+      } catch (err) {
+        toast(err.message, true);
+      }
     });
 
     document.getElementById("btn-delete-demande").addEventListener("click", async () => {
       const id = document.getElementById("dem-id").value;
       if (!id) return;
-      const { error } = await window.PianissimoDB.client.from("demandes").delete().eq("id", id);
-      if (error) return toast(error.message, true);
-      document.getElementById("dialog-demande").close();
-      toast("Fiche supprimée.");
-      await reloadCurrentTournee();
+      try {
+        await window.PianissimoDB.deleteDemande(id);
+        document.getElementById("dialog-demande").close();
+        toast("Fiche supprimée.");
+        await reloadCurrentTournee();
+      } catch (err) {
+        toast(err.message, true);
+      }
     });
 
     document.getElementById("form-tournee").addEventListener("submit", async (e) => {
       e.preventDefault();
       const nom = document.getElementById("tour-nom").value.trim();
       const slug = `${nom.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${Date.now().toString(36)}`;
-      const { data, error } = await window.PianissimoDB.client
-        .from("tournees")
-        .insert({
+      try {
+        const data = await window.PianissimoDB.createTournee({
           slug,
           nom,
           date_debut: document.getElementById("tour-debut").value,
@@ -879,14 +872,14 @@
           nb_luthiers: Number(document.getElementById("tour-luthiers").value || 2),
           bareme: { concert_eur: 320, concert_h: 2.5, etude_eur: 280, etude_h: 2, celtique_eur: 150, celtique_h: 0.75 },
           notes: document.getElementById("tour-notes").value.trim(),
-        })
-        .select()
-        .single();
-      if (error) return toast(error.message, true);
-      document.getElementById("dialog-tournee").close();
-      state.tournees = await window.PianissimoDB.fetchTournees();
-      await openTourneeWorkspace(data.id);
-      toast(`Tournée « ${nom} » créée.`);
+        });
+        document.getElementById("dialog-tournee").close();
+        state.tournees = await window.PianissimoDB.fetchTournees();
+        await openTourneeWorkspace(data.id);
+        toast(`Tournée « ${nom} » créée.`);
+      } catch (err) {
+        toast(err.message, true);
+      }
     });
 
     document.getElementById("auth-form").addEventListener("submit", async (e) => {

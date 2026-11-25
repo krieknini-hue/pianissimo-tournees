@@ -15,7 +15,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" crossorigin="" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" crossorigin="" />
-  <link rel="stylesheet" href="./css/app.css?v=3" />
+  <link rel="stylesheet" href="./css/app.css?v=4" />
 </head>
 <body>
   <!-- Écran 0 : Authentification -->
@@ -34,7 +34,7 @@
         <p id="auth-error" class="auth-error" role="alert" hidden></p>
         <button type="submit" id="auth-submit-btn" class="btn btn-primary btn-block">Ouvrir l'atelier tournées</button>
       </form>
-      <p class="auth-hint">Accès chiffré · Synchronisation temps réel Supabase · Zéro donnée publique</p>
+      <p class="auth-hint">Hébergé sur votre VPS · HTTPS · Synchronisation SMS, WhatsApp &amp; Mail</p>
     </div>
   </section>
 
@@ -91,7 +91,7 @@
             <span>Celtique <strong>150€ · 45 min</strong></span>
           </div>
           <span id="ws-page-indicator" class="badge badge-concert">1/5 · Demandes</span>
-          <span id="realtime-pill" class="realtime-pill" title="Synchronisation temps réel">● Direct</span>
+          <span id="realtime-pill" class="realtime-pill" title="Synchronisation temps réel VPS">● Direct</span>
         </div>
       </header>
 
@@ -223,14 +223,17 @@
           </div>
         </section>
 
-        <!-- PAGE 4 : MESSAGES & WHATSAPP (Maître -> Détail plein écran sur mobile) -->
+        <!-- PAGE 4 : MESSAGES & WHATSAPP -->
         <section role="tabpanel" id="panel-messages" aria-labelledby="tab-messages" hidden="until-found">
           <div class="panel-inner messages-panel-inner">
             <div id="messages-layout" class="messages-layout">
               <!-- Volet liste clients -->
               <aside id="msg-sidebar-pane" class="card messages-sidebar" aria-label="Liste des clients">
                 <div class="sidebar-head">
-                  <h2>Clients &amp; suivis</h2>
+                  <div class="sidebar-head-row">
+                    <h2>Clients &amp; suivis</h2>
+                    <button type="button" id="btn-sync-messages" class="btn btn-ghost btn-xs" title="Synchroniser SMS, WhatsApp et Mail maintenant">↻ Actualiser</button>
+                  </div>
                   <input type="search" id="msg-search" class="input-sm" placeholder="Rechercher un client..." aria-label="Filtrer la liste clients" />
                   <div class="sidebar-filters">
                     <select id="msg-filter-statut" class="select-sm" aria-label="Statut client">
@@ -250,7 +253,7 @@
                 <ul id="msg-client-list" class="msg-client-list"></ul>
               </aside>
 
-              <!-- Volet échanges + réponse WhatsApp -->
+              <!-- Volet échanges + réponse -->
               <section id="msg-workspace-pane" class="card messages-workspace" aria-label="Historique et réponse client">
                 <div id="msg-empty-state" class="empty-state">
                   <p>Touchez un client dans la liste pour afficher ses échanges et préparer la réponse WhatsApp / Email.</p>
@@ -278,7 +281,7 @@
 
                   <div class="msg-thread-section">
                     <div class="section-row">
-                      <h3>Historique des échanges</h3>
+                      <h3>Historique (WA, SMS, Mail)</h3>
                       <span id="msg-thread-count" class="badge badge-neutral">0</span>
                     </div>
                     <div id="msg-thread-list" class="msg-thread-list"></div>
@@ -295,7 +298,7 @@
                         <option value="SMS">SMS</option>
                         <option value="Note">Note</option>
                       </select>
-                      <input type="text" id="msg-log-text" class="input-sm flex-1" placeholder="Consigner une réponse reçue ou une note..." required />
+                      <input type="text" id="msg-log-text" class="input-sm flex-1" placeholder="Consigner une note ou un échange..." required />
                       <button type="submit" class="btn btn-ghost btn-sm">Ajouter</button>
                     </form>
                   </div>
@@ -305,8 +308,8 @@
                       <h3>Réponse à personnaliser</h3>
                       <div class="composer-meta">
                         <select id="composer-canal" class="select-sm" aria-label="Canal d'envoi">
-                          <option value="WhatsApp">WhatsApp</option>
-                          <option value="Email">Email</option>
+                          <option value="WhatsApp">WhatsApp (pro)</option>
+                          <option value="Email">Email (pro)</option>
                         </select>
                         <span id="composer-draft-status" class="badge badge-neutral">Brouillon</span>
                       </div>
@@ -332,9 +335,8 @@
                     <div class="composer-actions">
                       <button type="button" id="btn-save-draft" class="btn btn-ghost btn-sm">Enregistrer</button>
                       <button type="button" id="btn-copy-msg" class="btn btn-ghost btn-sm">Copier</button>
-                      <a id="btn-open-wa" class="btn btn-whatsapp btn-sm" href="#" target="_blank" rel="noopener">Envoyer WhatsApp</a>
-                      <a id="btn-open-mail" class="btn btn-ghost btn-sm" href="#" hidden>Ouvrir Email</a>
-                      <button type="button" id="btn-mark-sent" class="btn btn-primary btn-sm">Marquer envoyé</button>
+                      <button type="button" id="btn-send-direct" class="btn btn-whatsapp btn-sm">Envoyer (compte pro Anthony)</button>
+                      <a id="btn-open-wa" class="btn btn-ghost btn-xs" href="#" target="_blank" rel="noopener">App WA ↗</a>
                     </div>
                   </div>
                 </div>
@@ -351,7 +353,7 @@
         </section>
       </main>
 
-      <!-- Barre d'onglets (haut sur desktop, barre inférieure sur smartphone) -->
+      <!-- Barre d'onglets -->
       <nav class="tabs-bar" aria-label="Navigation entre pages">
         <div class="tablist" focusgroup="tablist nomemory" aria-label="Pages de la tournée">
           <button type="button" role="tab" id="tab-demandes" aria-selected="true" focusgroupstart data-panel="panel-demandes" data-label="Demandes">
@@ -365,8 +367,8 @@
             <span class="tab-label">Planning</span>
             <span id="badge-tab-planning" class="tab-count">0</span>
           </button>
-          <button type="button" role="tab" id="tab-messages" aria-selected="false" data-panel="panel-messages" data-label="WhatsApp">
-            <span class="tab-label">WhatsApp</span>
+          <button type="button" role="tab" id="tab-messages" aria-selected="false" data-panel="panel-messages" data-label="Messages">
+            <span class="tab-label">Messages</span>
             <span id="badge-tab-messages" class="tab-count">0</span>
           </button>
           <button type="button" role="tab" id="tab-finance" aria-selected="false" data-panel="panel-finance" data-label="Pilotage">
@@ -375,7 +377,7 @@
         </div>
       </nav>
 
-      <!-- Boutons flottants ▲ / ▼ pour changer de page plein écran sans conflit tactile -->
+      <!-- Boutons flottants ▲ / ▼ -->
       <div id="page-stepper" class="page-stepper" role="group" aria-label="Changer de page">
         <button type="button" id="btn-page-prev" class="stepper-btn" aria-label="Page précédente" title="Page précédente">▲</button>
         <span id="page-stepper-label" class="stepper-label">1/5</span>
@@ -383,6 +385,23 @@
       </div>
     </div>
   </div>
+
+  <!-- MODALE : Confirmation explicite d'envoi direct via compte pro Anthony -->
+  <dialog id="dialog-confirm-send" closedby="any" aria-labelledby="dialog-confirm-send-title">
+    <div class="dialog-header">
+      <h1 id="dialog-confirm-send-title">Confirmer l'envoi au client</h1>
+      <button type="button" class="btn btn-ghost btn-sm" data-close-dialog="dialog-confirm-send" aria-label="Fermer">✕</button>
+    </div>
+    <div class="dialog-form">
+      <p id="confirm-send-target" style="margin:0;font-weight:600;"></p>
+      <div id="confirm-send-preview" class="confirm-send-preview"></div>
+      <p class="card-sub" style="margin:0;">Ce message sera envoyé immédiatement depuis le compte pro d'Anthony (WhatsApp `06 28 23 07 61` ou Gmail `anthony.accordeur@gmail.com`).</p>
+      <div class="dialog-footer">
+        <button type="button" class="btn btn-ghost" data-close-dialog="dialog-confirm-send">Annuler</button>
+        <button type="button" id="btn-confirm-send-exec" class="btn btn-whatsapp">Confirmer et envoyer</button>
+      </div>
+    </div>
+  </dialog>
 
   <!-- MODALE : Édition / Création de Demande -->
   <dialog id="dialog-demande" closedby="any" aria-labelledby="dialog-demande-title">
@@ -627,18 +646,16 @@
 
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.2/dist/umd/supabase.js" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" crossorigin=""></script>
 
-  <script src="./js/config.js?v=3"></script>
-  <script src="./js/supabase-client.js?v=3"></script>
-  <script src="./js/routing.js?v=3"></script>
-  <script src="./js/templates.js?v=3"></script>
-  <script src="./js/map.js?v=3"></script>
-  <script src="./js/planning.js?v=3"></script>
-  <script src="./js/messages.js?v=3"></script>
-  <script src="./js/finance.js?v=3"></script>
-  <script src="./js/app.js?v=3"></script>
+  <script src="./js/api-client.js?v=4"></script>
+  <script src="./js/routing.js?v=4"></script>
+  <script src="./js/templates.js?v=4"></script>
+  <script src="./js/map.js?v=4"></script>
+  <script src="./js/planning.js?v=4"></script>
+  <script src="./js/messages.js?v=4"></script>
+  <script src="./js/finance.js?v=4"></script>
+  <script src="./js/app.js?v=4"></script>
 </body>
 </html>
