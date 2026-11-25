@@ -186,22 +186,45 @@
       .map((t) => {
         const [cls, lbl] = tourStatusBadge(t.statut);
         const isPriority = t.statut === "en_preparation" || t.statut === "en_cours";
+        const b = getTourBareme(t);
         return `
-          <button type="button" class="hub-tour-card ${isPriority ? "is-priority" : ""}" data-tour-id="${t.id}">
+          <div class="hub-tour-card ${isPriority ? "is-priority" : ""}">
             <div class="hub-tour-card-top">
               <strong>${escapeHtml(t.nom)}</strong>
               <span class="badge ${cls}">${lbl}</span>
             </div>
             <div style="font-size:0.84rem;color:#6B6257;">${escapeHtml(t.date_debut)} → ${escapeHtml(t.date_fin)} · ${t.nb_luthiers || 2} luthier(s)</div>
+            <div style="font-size:0.78rem;color:#6B6257;">Concert ${b.concert_eur}€ (${window.formatDurationH(b.concert_h)}) · Étude ${b.etude_eur}€ (${window.formatDurationH(b.etude_h)}) · Reprise ${b.reprise_eur}€ (${window.formatDurationH(b.reprise_h)}) · Celt. ${b.celtique_eur}€ (${window.formatDurationH(b.celtique_h)})</div>
             ${t.notes ? `<div style="font-size:0.78rem;color:#6B6257;">${escapeHtml(t.notes)}</div>` : ""}
-          </button>
+            <div class="hub-tour-card-actions">
+              <button type="button" class="btn btn-primary btn-xs js-open-tour" data-tour-id="${t.id}">Ouvrir</button>
+              <button type="button" class="btn btn-ghost btn-xs js-edit-tour" data-tour-id="${t.id}">⚙ Tarifs / Modifier</button>
+            </div>
+          </div>
         `;
       })
       .join("");
 
-    cards.querySelectorAll(".hub-tour-card").forEach((btn) => {
+    cards.querySelectorAll(".js-open-tour").forEach((btn) => {
       btn.addEventListener("click", () => openTourneeWorkspace(btn.dataset.tourId));
     });
+    cards.querySelectorAll(".js-edit-tour").forEach((btn) => {
+      btn.addEventListener("click", () => openTourneeDialog(btn.dataset.tourId));
+    });
+  }
+
+  function getTourBareme(t) {
+    return {
+      concert_eur: 320,
+      concert_h: 2.5,
+      etude_eur: 280,
+      etude_h: 2.0,
+      reprise_eur: 160,
+      reprise_h: 1.0,
+      celtique_eur: 150,
+      celtique_h: 0.75,
+      ...(t?.bareme || {}),
+    };
   }
 
   function showHub() {
@@ -216,6 +239,28 @@
     if (!t) return;
     document.getElementById("ws-tour-name").textContent = t.nom;
     document.getElementById("ws-tour-dates").textContent = `${t.date_debut} → ${t.date_fin}`;
+
+    const b = getTourBareme(t);
+    const baremeEl = document.getElementById("ws-bareme-pill");
+    if (baremeEl) {
+      baremeEl.innerHTML = `
+        <span>Concert <strong>${b.concert_eur}€ · ${window.formatDurationH(b.concert_h)}</strong></span>
+        <span>Étude <strong>${b.etude_eur}€ · ${window.formatDurationH(b.etude_h)}</strong></span>
+        <span>Reprise <strong>${b.reprise_eur}€ · ${window.formatDurationH(b.reprise_h)}</strong></span>
+        <span>Celtique <strong>${b.celtique_eur}€ · ${window.formatDurationH(b.celtique_h)}</strong></span>
+      `;
+    }
+    const legEl = document.getElementById("map-legend");
+    if (legEl) {
+      legEl.innerHTML = `
+        <span class="legend-item"><i class="dot dot-concert"></i> Concert (${window.formatDurationH(b.concert_h)})</span>
+        <span class="legend-item"><i class="dot dot-etude"></i> Étude (${window.formatDurationH(b.etude_h)})</span>
+        <span class="legend-item"><i class="dot dot-reprise"></i> Reprise (${window.formatDurationH(b.reprise_h)})</span>
+        <span class="legend-item"><i class="dot dot-celtique"></i> Celtique (${window.formatDurationH(b.celtique_h)})</span>
+        <span class="legend-item"><i class="dot dot-inconnu"></i> À préciser</span>
+        <span class="legend-item"><i class="dot dot-conflit"></i> Conflit</span>
+      `;
+    }
 
     const luthiersSel = document.getElementById("planning-luthiers");
     if (luthiersSel) luthiersSel.value = String(t.nb_luthiers || 2);
@@ -234,6 +279,7 @@
     const actives = state.demandes.filter((d) => d.statut !== "annule" && d.statut !== "doublon");
     const c = actives.reduce((a, d) => a + Number(d.nb_concert || 0), 0);
     const e = actives.reduce((a, d) => a + Number(d.nb_etude || 0), 0);
+    const rep = actives.reduce((a, d) => a + Number(d.nb_reprise || 0), 0);
     const cel = actives.reduce((a, d) => a + Number(d.nb_celtique || 0), 0);
     const inc = actives.reduce((a, d) => a + Number(d.nb_inconnu || 0), 0);
     const confirmes = actives.filter((d) => d.statut === "confirme").length;
@@ -248,8 +294,8 @@
     document.getElementById("kpi-strip").innerHTML = `
       <div class="kpi-card">
         <div class="kpi-label">Harpes actives</div>
-        <div class="kpi-value">${c + e + cel + inc}</div>
-        <div class="kpi-detail">${c} concert · ${e} étude · ${cel} celt. · ${inc} ?</div>
+        <div class="kpi-value">${c + e + rep + cel + inc}</div>
+        <div class="kpi-detail">${c} conc. · ${e} ét. · ${rep} rep. · ${cel} celt. · ${inc} ?</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label">Demandes / RDV</div>
@@ -258,7 +304,7 @@
       </div>
       <div class="kpi-card">
         <div class="kpi-label">Charge atelier</div>
-        <div class="kpi-value">${totalHours.toFixed(1)} h</div>
+        <div class="kpi-value">${window.formatDurationH(totalHours)}</div>
         <div class="kpi-detail">Par instrument</div>
       </div>
       <div class="kpi-card">
@@ -318,6 +364,7 @@
       if (sec && d.secteur !== sec) return false;
       if (typ === "concert" && !d.nb_concert) return false;
       if (typ === "etude" && !d.nb_etude) return false;
+      if (typ === "reprise" && !d.nb_reprise) return false;
       if (typ === "celtique" && !d.nb_celtique) return false;
       if (typ === "inconnu" && !d.nb_inconnu) return false;
       if (q && !`${d.nom} ${d.ville} ${d.secteur} ${d.instruments_detail} ${d.adresse}`.toLowerCase().includes(q)) return false;
@@ -345,6 +392,7 @@
             const chips = [];
             if (d.nb_concert) chips.push(`<span class="harp-chip hc-concert">${d.nb_concert}C</span>`);
             if (d.nb_etude) chips.push(`<span class="harp-chip hc-etude">${d.nb_etude}E</span>`);
+            if (d.nb_reprise) chips.push(`<span class="harp-chip hc-reprise">${d.nb_reprise}R</span>`);
             if (d.nb_celtique) chips.push(`<span class="harp-chip hc-celtique">${d.nb_celtique}Cel</span>`);
             if (d.nb_inconnu) chips.push(`<span class="harp-chip hc-inconnu">${d.nb_inconnu}?</span>`);
             if (!chips.length) chips.push(`<span class="harp-chip hc-inconnu">0</span>`);
@@ -368,8 +416,8 @@
                 <div style="font-size:0.74rem;color:#6B6257;margin-top:2px;">${escapeHtml((d.instruments_detail || "").slice(0, 48))}${(d.instruments_detail || "").length > 48 ? "…" : ""}</div>
               </td>
               <td>
-                <strong>${Number(d.duree_estimee_h || 0)}h</strong>
-                <div style="font-size:0.74rem;color:#6B6257;">${d.montant_estime_eur != null ? `${d.montant_estime_eur} €` : "Fourchette"}</div>
+                <strong>${window.formatDurationH(d.duree_estimee_h)}</strong>
+                <div style="font-size:0.74rem;color:#6B6257;">${d.montant_estime_eur != null ? `${d.montant_estime_eur} €` : "Tarif à définir"}</div>
               </td>
               <td><span class="badge ${stCls}">${stLbl}</span></td>
               <td>${escapeHtml(creneau)}</td>
@@ -448,6 +496,102 @@
     });
   }
 
+  let abbyDraftLines = [];
+
+  function renderAbbyLines() {
+    const box = document.getElementById("abby-lines-container");
+    if (!box) return;
+    box.innerHTML = abbyDraftLines
+      .map(
+        (ln, i) => `
+      <div class="abby-line-row">
+        <input type="text" class="js-abby-des" data-idx="${i}" value="${escapeHtml(ln.designation)}" placeholder="Prestation" required />
+        <input type="number" min="1" step="1" class="js-abby-qty" data-idx="${i}" value="${Number(ln.quantity || 1)}" title="Quantité" required />
+        <input type="number" min="0" step="1" class="js-abby-eur" data-idx="${i}" value="${Number(ln.unitPrice_eur || 0)}" title="Prix unitaire (€)" required />
+        <button type="button" class="btn btn-danger-ghost btn-xs js-abby-del" data-idx="${i}" aria-label="Supprimer">✕</button>
+      </div>
+    `,
+      )
+      .join("");
+
+    const updateTotal = () => {
+      const tot = abbyDraftLines.reduce((acc, l) => acc + Number(l.quantity || 0) * Number(l.unitPrice_eur || 0), 0);
+      document.getElementById("abby-total-eur").textContent = `${Math.round(tot).toLocaleString("fr-FR")} €`;
+    };
+    updateTotal();
+
+    box.querySelectorAll(".js-abby-des").forEach((el) => {
+      el.addEventListener("input", () => {
+        abbyDraftLines[Number(el.dataset.idx)].designation = el.value;
+      });
+    });
+    box.querySelectorAll(".js-abby-qty").forEach((el) => {
+      el.addEventListener("input", () => {
+        abbyDraftLines[Number(el.dataset.idx)].quantity = Math.max(1, Number(el.value || 1));
+        updateTotal();
+      });
+    });
+    box.querySelectorAll(".js-abby-eur").forEach((el) => {
+      el.addEventListener("input", () => {
+        abbyDraftLines[Number(el.dataset.idx)].unitPrice_eur = Math.max(0, Number(el.value || 0));
+        updateTotal();
+      });
+    });
+    box.querySelectorAll(".js-abby-del").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        abbyDraftLines.splice(Number(btn.dataset.idx), 1);
+        renderAbbyLines();
+      });
+    });
+  }
+
+  function openAbbyDraftDialog(demandeId) {
+    const d = state.demandes.find((x) => x.id === demandeId);
+    if (!d) return;
+    const b = getTourBareme(currentTournee());
+    document.getElementById("abby-demande-id").value = d.id;
+    document.getElementById("abby-devis-title").value = `Réglage harpe(s) — ${currentTournee()?.nom || "Tournée"}`;
+    document.getElementById("abby-client-summary").textContent = `${d.nom} (${d.ville || d.secteur}) · ${d.email || d.telephone || "contact à vérifier"}`;
+
+    abbyDraftLines = [];
+    if (Number(d.nb_concert || 0) > 0) {
+      abbyDraftLines.push({ designation: "Entretien et réglage complet harpe de concert", quantity: Number(d.nb_concert), unitPrice_eur: b.concert_eur });
+    }
+    if (Number(d.nb_etude || 0) > 0) {
+      abbyDraftLines.push({ designation: "Entretien et réglage complet harpe d'étude", quantity: Number(d.nb_etude), unitPrice_eur: b.etude_eur });
+    }
+    if (Number(d.nb_reprise || 0) > 0) {
+      abbyDraftLines.push({ designation: "Reprise de réglage harpe à pédales", quantity: Number(d.nb_reprise), unitPrice_eur: b.reprise_eur });
+    }
+    if (Number(d.nb_celtique || 0) > 0) {
+      abbyDraftLines.push({ designation: "Entretien et réglage harpe celtique", quantity: Number(d.nb_celtique), unitPrice_eur: b.celtique_eur });
+    }
+    if (!abbyDraftLines.length) {
+      abbyDraftLines.push({
+        designation: `Entretien et réglage de harpe (${d.instruments_detail || "à préciser"})`,
+        quantity: 1,
+        unitPrice_eur: Number(d.montant_estime_eur || b.concert_eur),
+      });
+    }
+    renderAbbyLines();
+    document.getElementById("dialog-abby-devis").showModal();
+  }
+
+  function openAbbySendDialog(demandeId, billingId) {
+    const d = state.demandes.find((x) => x.id === demandeId);
+    if (!d) return;
+    document.getElementById("abby-send-billing-id").value = billingId;
+    document.getElementById("abby-send-demande-id").value = d.id;
+    const defaultCanal = d.email ? "Email" : "WhatsApp";
+    document.getElementById("abby-send-canal").value = defaultCanal;
+    document.getElementById("abby-send-objet").value = `Devis Pianissimo ${d.devis_ref || ""} — ${d.nom}`.trim();
+    document.getElementById("abby-send-target").textContent = `${d.nom} · ${d.email || "pas d'email"} · ${d.telephone || "pas de téléphone"}`;
+    document.getElementById("abby-send-pdf-link").href = `/api/abby/devis/${encodeURIComponent(billingId)}/pdf`;
+    document.getElementById("abby-send-texte").value = `Bonjour,\n\nVeuillez trouver ci-joint notre devis ${d.devis_ref || ""} pour l'entretien de votre/vos harpe(s).\n\nBien cordialement,\nMarie — PIANISSIMO\nContact Anthony : ${window.PianissimoTemplates.ANTHONY_PHONE_DISPLAY}`;
+    document.getElementById("abby-send-subject-wrap").hidden = defaultCanal !== "Email";
+    document.getElementById("dialog-abby-send").showModal();
+  }
+
   function renderFinance() {
     window.PianissimoFinance.render({
       tournee: currentTournee(),
@@ -473,6 +617,20 @@
         }
       },
       onOpenDemande: openDemandeDialog,
+      onOpenAbbyDraft: openAbbyDraftDialog,
+      onFinalizeAbby: async (demandeId, billingId) => {
+        if (!window.confirm("Avez-vous contrôlé le PDF brouillon ? Confirmer la finalisation officielle du devis dans Abby (attribution du numéro définitif) ?")) {
+          return;
+        }
+        try {
+          const res = await window.PianissimoDB.finalizeAbbyDevis(billingId, demandeId);
+          toast(`Devis finalisé dans Abby : ${res.ref}`);
+          await reloadCurrentTournee();
+        } catch (err) {
+          toast(err.message, true);
+        }
+      },
+      onOpenAbbySend: openAbbySendDialog,
     });
   }
 
@@ -491,10 +649,41 @@
     );
   }
 
+  function openTourneeDialog(tourneeId = null) {
+    const dialog = document.getElementById("dialog-tournee");
+    const t = tourneeId ? state.tournees.find((x) => x.id === tourneeId) : null;
+    const b = getTourBareme(t);
+    document.getElementById("form-tournee").reset();
+    document.getElementById("tour-id").value = t?.id || "";
+    document.getElementById("dialog-tournee-title").textContent = t ? `Modifier · ${t.nom}` : "Programmer une tournée";
+    document.getElementById("btn-submit-tournee").textContent = t ? "Enregistrer les tarifs et dates" : "Créer la tournée";
+    document.getElementById("tour-nom").value = t?.nom || "";
+    document.getElementById("tour-debut").value = t?.date_debut || "";
+    document.getElementById("tour-fin").value = t?.date_fin || "";
+    document.getElementById("tour-statut").value = t?.statut || "en_preparation";
+    document.getElementById("tour-luthiers").value = String(t?.nb_luthiers || 2);
+    document.getElementById("tour-notes").value = t?.notes || "";
+    document.getElementById("bareme-concert-eur").value = b.concert_eur;
+    document.getElementById("bareme-concert-min").value = Math.round(Number(b.concert_h) * 60);
+    document.getElementById("bareme-etude-eur").value = b.etude_eur;
+    document.getElementById("bareme-etude-min").value = Math.round(Number(b.etude_h) * 60);
+    document.getElementById("bareme-reprise-eur").value = b.reprise_eur;
+    document.getElementById("bareme-reprise-min").value = Math.round(Number(b.reprise_h) * 60);
+    document.getElementById("bareme-celtique-eur").value = b.celtique_eur;
+    document.getElementById("bareme-celtique-min").value = Math.round(Number(b.celtique_h) * 60);
+    dialog.showModal();
+  }
+
   function openDemandeDialog(demandeId = null) {
     const dialog = document.getElementById("dialog-demande");
     const d = demandeId ? state.demandes.find((x) => x.id === demandeId) : null;
+    const b = getTourBareme(currentTournee());
     document.getElementById("dialog-demande-title").textContent = d ? `Fiche · ${d.nom}` : "Nouvelle demande client";
+
+    document.getElementById("lbl-dem-concert").textContent = `Concert (${window.formatDurationH(b.concert_h)} · ${b.concert_eur}€)`;
+    document.getElementById("lbl-dem-etude").textContent = `Étude (${window.formatDurationH(b.etude_h)} · ${b.etude_eur}€)`;
+    document.getElementById("lbl-dem-reprise").textContent = `Reprise réglage (${window.formatDurationH(b.reprise_h)} · ${b.reprise_eur}€)`;
+    document.getElementById("lbl-dem-celtique").textContent = `Celtique (${window.formatDurationH(b.celtique_h)} · ${b.celtique_eur}€)`;
 
     document.getElementById("dem-id").value = d?.id || "";
     document.getElementById("dem-nom").value = d?.nom || "";
@@ -513,9 +702,11 @@
     document.getElementById("dem-email").value = d?.email || "";
     document.getElementById("dem-concert").value = d?.nb_concert ?? 0;
     document.getElementById("dem-etude").value = d?.nb_etude ?? 0;
+    document.getElementById("dem-reprise").value = d?.nb_reprise ?? 0;
     document.getElementById("dem-celtique").value = d?.nb_celtique ?? 0;
     document.getElementById("dem-inconnu").value = d?.nb_inconnu ?? 0;
     document.getElementById("dem-duree").value = d?.duree_estimee_h ?? 0;
+    document.getElementById("dem-duree-preview").textContent = window.formatDurationH(d?.duree_estimee_h ?? 0);
     document.getElementById("dem-montant").value = d?.montant_estime_eur ?? "";
     document.getElementById("dem-montant-note").value = d?.montant_note || "";
     document.getElementById("dem-instruments-detail").value = d?.instruments_detail || "";
@@ -531,17 +722,18 @@
   }
 
   function recalcHarpFields() {
-    const t = currentTournee();
-    const b = t?.bareme || { concert_eur: 320, concert_h: 2.5, etude_eur: 280, etude_h: 2, celtique_eur: 150, celtique_h: 0.75 };
+    const b = getTourBareme(currentTournee());
     const c = Number(document.getElementById("dem-concert").value || 0);
     const e = Number(document.getElementById("dem-etude").value || 0);
+    const r = Number(document.getElementById("dem-reprise").value || 0);
     const cel = Number(document.getElementById("dem-celtique").value || 0);
     const inc = Number(document.getElementById("dem-inconnu").value || 0);
 
-    const h = c * b.concert_h + e * b.etude_h + cel * b.celtique_h + inc * b.concert_h;
-    const eur = c * b.concert_eur + e * b.etude_eur + cel * b.celtique_eur;
-    document.getElementById("dem-duree").value = h;
-    if (c + e + cel > 0) {
+    const h = c * b.concert_h + e * b.etude_h + r * b.reprise_h + cel * b.celtique_h + inc * b.concert_h;
+    const eur = c * b.concert_eur + e * b.etude_eur + r * b.reprise_eur + cel * b.celtique_eur;
+    document.getElementById("dem-duree").value = Number(h.toFixed(2));
+    document.getElementById("dem-duree-preview").textContent = window.formatDurationH(h);
+    if (c + e + r + cel > 0) {
       document.getElementById("dem-montant").value = eur;
     }
   }
@@ -684,10 +876,7 @@
       if (id) openTourneeWorkspace(id);
     });
     document.getElementById("btn-back-hub").addEventListener("click", showHub);
-    document.getElementById("btn-new-tour").addEventListener("click", () => {
-      document.getElementById("form-tournee").reset();
-      document.getElementById("dialog-tournee").showModal();
-    });
+    document.getElementById("btn-new-tour").addEventListener("click", () => openTourneeDialog(null));
     document.getElementById("btn-logout").addEventListener("click", async () => {
       await window.PianissimoDB.logout();
       window.location.reload();
@@ -761,10 +950,42 @@
       toast("Cache trajets vidé, recalcul OSRM lancé.");
     });
 
+    document.getElementById("btn-sync-calendar").addEventListener("click", async () => {
+      if (!state.currentTourneeId) return;
+      const btn = document.getElementById("btn-sync-calendar");
+      const slots = window.PianissimoPlanning.getScheduledSlots();
+      btn.disabled = true;
+      btn.textContent = "Analyse Agenda...";
+      try {
+        const preview = await window.PianissimoDB.syncTourneeCalendar(state.currentTourneeId, { dry_run: true, slots });
+        if (!preview.total) {
+          toast("Aucun rendez-vous planifié à basculer dans l'agenda.", true);
+          return;
+        }
+        const ok = window.confirm(
+          `Basculer vers Google Agenda « Pianissimo » (${preview.calendar_id}) :\n` +
+            `• ${preview.create_count} événement(s) à créer\n` +
+            `• ${preview.update_count} événement(s) déjà existant(s) à mettre à jour\n\nConfirmer la synchronisation ?`,
+        );
+        if (!ok) return;
+        btn.textContent = "Synchro Agenda...";
+        const res = await window.PianissimoDB.syncTourneeCalendar(state.currentTourneeId, { dry_run: false, slots });
+        toast(`Google Agenda Pianissimo à jour : ${res.created} créé(s), ${res.updated} mis à jour.`);
+      } catch (err) {
+        toast(err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "📅 Agenda Pianissimo";
+      }
+    });
+
     document.getElementById("btn-print-planning").addEventListener("click", () => window.print());
 
-    ["dem-concert", "dem-etude", "dem-celtique", "dem-inconnu"].forEach((id) => {
+    ["dem-concert", "dem-etude", "dem-reprise", "dem-celtique", "dem-inconnu"].forEach((id) => {
       document.getElementById(id).addEventListener("change", recalcHarpFields);
+    });
+    document.getElementById("dem-duree").addEventListener("input", (e) => {
+      document.getElementById("dem-duree-preview").textContent = window.formatDurationH(e.target.value);
     });
 
     document.getElementById("btn-geocode-demande").addEventListener("click", async () => {
@@ -817,6 +1038,7 @@
         email: document.getElementById("dem-email").value.trim(),
         nb_concert: Number(document.getElementById("dem-concert").value || 0),
         nb_etude: Number(document.getElementById("dem-etude").value || 0),
+        nb_reprise: Number(document.getElementById("dem-reprise").value || 0),
         nb_celtique: Number(document.getElementById("dem-celtique").value || 0),
         nb_inconnu: Number(document.getElementById("dem-inconnu").value || 0),
         duree_estimee_h: Number(document.getElementById("dem-duree").value || 0),
@@ -860,25 +1082,100 @@
 
     document.getElementById("form-tournee").addEventListener("submit", async (e) => {
       e.preventDefault();
+      const id = document.getElementById("tour-id").value || null;
       const nom = document.getElementById("tour-nom").value.trim();
-      const slug = `${nom.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${Date.now().toString(36)}`;
+      const bareme = {
+        concert_eur: Number(document.getElementById("bareme-concert-eur").value || 320),
+        concert_h: Number(document.getElementById("bareme-concert-min").value || 150) / 60,
+        etude_eur: Number(document.getElementById("bareme-etude-eur").value || 280),
+        etude_h: Number(document.getElementById("bareme-etude-min").value || 120) / 60,
+        reprise_eur: Number(document.getElementById("bareme-reprise-eur").value || 160),
+        reprise_h: Number(document.getElementById("bareme-reprise-min").value || 60) / 60,
+        celtique_eur: Number(document.getElementById("bareme-celtique-eur").value || 150),
+        celtique_h: Number(document.getElementById("bareme-celtique-min").value || 45) / 60,
+      };
+      const payload = {
+        nom,
+        date_debut: document.getElementById("tour-debut").value,
+        date_fin: document.getElementById("tour-fin").value,
+        statut: document.getElementById("tour-statut").value,
+        nb_luthiers: Number(document.getElementById("tour-luthiers").value || 2),
+        bareme,
+        notes: document.getElementById("tour-notes").value.trim(),
+      };
       try {
-        const data = await window.PianissimoDB.createTournee({
-          slug,
-          nom,
-          date_debut: document.getElementById("tour-debut").value,
-          date_fin: document.getElementById("tour-fin").value,
-          statut: document.getElementById("tour-statut").value,
-          nb_luthiers: Number(document.getElementById("tour-luthiers").value || 2),
-          bareme: { concert_eur: 320, concert_h: 2.5, etude_eur: 280, etude_h: 2, celtique_eur: 150, celtique_h: 0.75 },
-          notes: document.getElementById("tour-notes").value.trim(),
-        });
+        let saved;
+        if (id) {
+          saved = await window.PianissimoDB.updateTournee(id, payload);
+        } else {
+          const slug = `${nom.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}-${Date.now().toString(36)}`;
+          saved = await window.PianissimoDB.createTournee({ slug, ...payload });
+        }
         document.getElementById("dialog-tournee").close();
         state.tournees = await window.PianissimoDB.fetchTournees();
-        await openTourneeWorkspace(data.id);
-        toast(`Tournée « ${nom} » créée.`);
+        renderTourHub();
+        if (!id && saved?.id) {
+          await openTourneeWorkspace(saved.id);
+        }
+        toast(id ? `Tournée « ${nom} » et tarifs mis à jour.` : `Tournée « ${nom} » créée.`);
       } catch (err) {
         toast(err.message, true);
+      }
+    });
+
+    document.getElementById("btn-abby-add-line").addEventListener("click", () => {
+      abbyDraftLines.push({ designation: "Prestation complémentaire", quantity: 1, unitPrice_eur: 50 });
+      renderAbbyLines();
+    });
+
+    document.getElementById("form-abby-devis").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById("btn-abby-create-draft");
+      btn.disabled = true;
+      btn.textContent = "Création Abby...";
+      try {
+        const res = await window.PianissimoDB.createAbbyDevisDraft({
+          demande_id: document.getElementById("abby-demande-id").value,
+          title: document.getElementById("abby-devis-title").value.trim() || null,
+          lines: abbyDraftLines,
+        });
+        document.getElementById("dialog-abby-devis").close();
+        toast(`Brouillon Abby créé (${res.customer_name}). Ouvrez « PDF brouillon ↗ » pour le contrôler.`);
+        await reloadCurrentTournee();
+      } catch (err) {
+        toast(err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Créer le brouillon Abby";
+      }
+    });
+
+    document.getElementById("abby-send-canal").addEventListener("change", (e) => {
+      document.getElementById("abby-send-subject-wrap").hidden = e.target.value !== "Email";
+    });
+
+    document.getElementById("form-abby-send").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById("btn-abby-send-exec");
+      btn.disabled = true;
+      btn.textContent = "Envoi en cours...";
+      try {
+        const billingId = document.getElementById("abby-send-billing-id").value;
+        const canal = document.getElementById("abby-send-canal").value;
+        await window.PianissimoDB.sendAbbyDevis(billingId, {
+          demande_id: document.getElementById("abby-send-demande-id").value,
+          canal,
+          objet: document.getElementById("abby-send-objet").value.trim(),
+          texte: document.getElementById("abby-send-texte").value.trim(),
+        });
+        document.getElementById("dialog-abby-send").close();
+        toast(`Devis PDF envoyé au client via ${canal}.`);
+        await reloadCurrentTournee();
+      } catch (err) {
+        toast(err.message, true);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Confirmer et envoyer le devis PDF";
       }
     });
 

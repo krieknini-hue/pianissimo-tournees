@@ -88,6 +88,40 @@
     return apiFetch("/api/sync/messages", { method: "POST" });
   }
 
+  async function createAbbyDevisDraft(payload) {
+    return apiFetch("/api/abby/devis/draft", { method: "POST", body: payload });
+  }
+
+  async function finalizeAbbyDevis(billingId, demandeId) {
+    return apiFetch(`/api/abby/devis/${encodeURIComponent(billingId)}/finalize`, {
+      method: "POST",
+      body: { demande_id: demandeId },
+    });
+  }
+
+  async function sendAbbyDevis(billingId, payload) {
+    return apiFetch(`/api/abby/devis/${encodeURIComponent(billingId)}/send`, {
+      method: "POST",
+      body: payload,
+    });
+  }
+
+  async function syncTourneeCalendar(tourneeId, payload) {
+    return apiFetch(`/api/tournees/${encodeURIComponent(tourneeId)}/sync-calendar`, {
+      method: "POST",
+      body: payload,
+    });
+  }
+
+  window.formatDurationH = function formatDurationH(hours) {
+    const mins = Math.max(0, Math.round(Number(hours || 0) * 60));
+    if (mins === 0) return "0 min";
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    if (h === 0) return `${m} min`;
+    return m ? `${h}h${String(m).padStart(2, "0")}` : `${h}h`;
+  };
+
   function subscribeTourneeRealtime(_tourneeId, onChange) {
     if (typeof EventSource === "undefined") return () => {};
     const es = new EventSource("/api/events", { withCredentials: true });
@@ -114,6 +148,10 @@
     logMessage,
     sendMessageDirect,
     syncMessagesNow,
+    createAbbyDevisDraft,
+    finalizeAbbyDevis,
+    sendAbbyDevis,
+    syncTourneeCalendar,
     subscribeTourneeRealtime,
   };
 })();

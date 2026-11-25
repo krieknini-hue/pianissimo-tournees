@@ -1,16 +1,16 @@
-const CACHE_NAME = "pianissimo-tournees-v5";
+const CACHE_NAME = "pianissimo-tournees-v6";
 const SHELL_ASSETS = [
   "./",
   "./index.html",
-  "./css/app.css?v=4",
-  "./js/api-client.js?v=4",
-  "./js/routing.js?v=4",
-  "./js/templates.js?v=4",
-  "./js/map.js?v=4",
-  "./js/planning.js?v=4",
-  "./js/messages.js?v=4",
-  "./js/finance.js?v=4",
-  "./js/app.js?v=4",
+  "./css/app.css?v=5",
+  "./js/api-client.js?v=5",
+  "./js/routing.js?v=5",
+  "./js/templates.js?v=5",
+  "./js/map.js?v=5",
+  "./js/planning.js?v=5",
+  "./js/messages.js?v=5",
+  "./js/finance.js?v=5",
+  "./js/app.js?v=5",
   "./icons/harp.svg",
   "./manifest.webmanifest",
 ];

@@ -12,6 +12,8 @@
   --concert-bg: #FEF6E4;
   --etude: #2B5B84;
   --etude-bg: #EBF3FA;
+  --reprise: #0D9488;
+  --reprise-bg: #CCFBF1;
   --celtique: #2B7A50;
   --celtique-bg: #E8F6EE;
   --inconnu: #6B655D;
@@ -254,15 +256,21 @@ select, input, textarea {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 14px;
-  cursor: pointer;
   font: inherit;
   box-shadow: var(--shadow);
   display: grid;
-  gap: 6px;
+  gap: 8px;
   transition: border-color 0.15s ease, transform 0.1s ease;
 }
 
 .hub-tour-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.hub-tour-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
 .hub-tour-card.is-priority {
   border-color: var(--concert);
   background: linear-gradient(180deg, #FFFDF8 0%, #FEF8EC 100%);
@@ -766,6 +774,7 @@ select, input, textarea {
 .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
 .dot-concert { background: var(--concert); }
 .dot-etude { background: var(--etude); }
+.dot-reprise { background: var(--reprise); }
 .dot-celtique { background: var(--celtique); }
 .dot-inconnu { background: var(--inconnu); }
 .dot-conflit { background: var(--danger); }
@@ -865,8 +874,35 @@ select, input, textarea {
 .harp-chip { font-size: 0.73rem; font-weight: 700; padding: 2px 6px; border-radius: 6px; }
 .hc-concert { background: var(--concert-bg); color: var(--concert); }
 .hc-etude { background: var(--etude-bg); color: var(--etude); }
+.hc-reprise { background: var(--reprise-bg); color: #115E59; }
 .hc-celtique { background: var(--celtique-bg); color: var(--celtique); }
 .hc-inconnu { background: var(--inconnu-bg); color: var(--inconnu); }
+
+.bareme-config-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.bareme-config-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 1.3fr) repeat(2, minmax(80px, 1fr));
+  gap: 8px;
+  align-items: center;
+}
+
+.abby-line-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 2fr) minmax(70px, 0.7fr) minmax(90px, 0.9fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+@media (max-width: 640px) {
+  .bareme-config-row,
+  .abby-line-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .row-actions { display: flex; flex-wrap: wrap; gap: 5px; }
 
 @container (width < 680px) {

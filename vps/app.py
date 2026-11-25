@@ -23,10 +23,15 @@ import re
 import secrets
 import sqlite3
 import subprocess
+import sys
+import tempfile
 import time
+import unicodedata
+import urllib.error
+import urllib.request
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +52,21 @@ GOOGLE_API_SCRIPT = Path(
     )
 )
 ANTHONY_HERMES_HOME = os.environ.get("ANTHONY_HERMES_HOME", "/root/.hermes/profiles/anthony")
+ABBY_ENV_PATH = Path(os.environ.get("ABBY_ENV_PATH", str(Path(ANTHONY_HERMES_HOME) / ".env")))
+ABBY_MCP_URL = os.environ.get("ABBY_MCP_URL", "https://api.abby.fr/mcp")
+PIANISSIMO_CALENDAR_ID = os.environ.get("PIANISSIMO_CALENDAR_ID", "anthony.accordeur@gmail.com")
 WACLI_BIN = os.environ.get("WACLI_BIN", "/usr/local/bin/wacli")
+
+DEFAULT_BAREME = {
+    "concert_eur": 320,
+    "concert_h": 2.5,
+    "etude_eur": 280,
+    "etude_h": 2.0,
+    "reprise_eur": 160,
+    "reprise_h": 1.0,
+    "celtique_eur": 150,
+    "celtique_h": 0.75,
+}
 
 ACCESS_CODE_HASH = os.environ.get("TOURNEES_ACCESS_CODE_HASH", "")
 SESSION_SECRET = os.environ.get("TOURNEES_SESSION_SECRET", "")
@@ -192,6 +211,15 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_ano_tournee ON anomalies(tournee_id);
             """
         )
+        for alter_sql in (
+            "ALTER TABLE demandes ADD COLUMN nb_reprise INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE demandes ADD COLUMN devis_abby_id TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE demandes ADD COLUMN devis_abby_statut TEXT NOT NULL DEFAULT ''",
+        ):
+            try:
+                conn.execute(alter_sql)
+            except sqlite3.OperationalError:
+                pass
 
 
 def broadcast_event(event_name: str) -> None:
@@ -255,6 +283,7 @@ def client_ip(request: Request) -> str:
 
 
 def row_to_tournee(r: sqlite3.Row) -> dict[str, Any]:
+    raw_bareme = json.loads(r["bareme_json"] or "{}")
     return {
         "id": r["id"],
         "slug": r["slug"],
@@ -263,8 +292,8 @@ def row_to_tournee(r: sqlite3.Row) -> dict[str, Any]:
         "date_fin": r["date_fin"],
         "statut": r["statut"],
         "nb_luthiers": r["nb_luthiers"],
-        "bareme": json.loads(r["bareme_json"]),
-        "frais_estimes": json.loads(r["frais_json"]),
+        "bareme": {**DEFAULT_BAREME, **raw_bareme},
+        "frais_estimes": json.loads(r["frais_json"] or "{}"),
         "notes": r["notes"],
         "created_at": r["created_at"],
         "updated_at": r["updated_at"],
@@ -534,6 +563,28 @@ class MessageSendBody(BaseModel):
     texte: str
 
 
+class AbbyDevisDraftBody(BaseModel):
+    demande_id: str
+    lines: list[dict[str, Any]] | None = None
+    title: str | None = None
+
+
+class AbbyDevisActionBody(BaseModel):
+    demande_id: str
+
+
+class AbbyDevisSendBody(BaseModel):
+    demande_id: str
+    canal: str = "Email"
+    objet: str = ""
+    texte: str = ""
+
+
+class CalendarSyncBody(BaseModel):
+    dry_run: bool = False
+    slots: list[dict[str, Any]] | None = None
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True}
@@ -590,7 +641,7 @@ def list_tournees(_auth: str = Depends(require_auth)):
 def create_tournee(body: TourneeCreate, _auth: str = Depends(require_auth)):
     tid = str(uuid.uuid4())
     now = now_iso()
-    bareme = body.bareme or {"concert_eur": 320, "concert_h": 2.5, "etude_eur": 280, "etude_h": 2.0, "celtique_eur": 150, "celtique_h": 0.75}
+    bareme = {**DEFAULT_BAREME, **(body.bareme or {})}
     frais = body.frais_estimes or {"location_voiture": 300, "carburant_peages": 180, "train_approche": 80, "hotel_nuit": 90, "nb_nuits": 5}
     with get_db() as conn:
         conn.execute(
@@ -662,10 +713,11 @@ def tournee_bundle(tournee_id: str, _auth: str = Depends(require_auth)):
 DEMANDE_FIELDS = {
     "tournee_id", "external_key", "nom", "categorie", "secteur", "ville", "cp", "pays",
     "adresse", "adresse_verifiee", "latitude", "longitude", "canal_prefere", "telephone", "email",
-    "nb_concert", "nb_etude", "nb_celtique", "nb_inconnu", "instruments_detail",
+    "nb_concert", "nb_etude", "nb_reprise", "nb_celtique", "nb_inconnu", "instruments_detail",
     "duree_estimee_h", "montant_estime_eur", "montant_note", "statut",
     "jour_date", "heure_debut", "ordre_jour", "creneau_epingle",
     "contraintes", "citation_source", "action_requise", "devis_statut", "devis_ref",
+    "devis_abby_id", "devis_abby_statut",
 }
 
 
@@ -853,6 +905,576 @@ def send_message_direct(body: MessageSendBody, _auth: str = Depends(require_auth
 
     broadcast_event("messages_historique")
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Intégration Abby MCP (Devis brouillon -> PDF -> finalisation -> envoi)
+# ---------------------------------------------------------------------------
+
+def _read_abby_api_key() -> str:
+    env_key = os.environ.get("ABBY_API_KEY", "").strip()
+    if env_key:
+        return env_key
+    if ABBY_ENV_PATH.exists():
+        for line in ABBY_ENV_PATH.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if line.startswith("ABBY_API_KEY="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    raise HTTPException(status_code=500, detail="Clé ABBY_API_KEY introuvable.")
+
+
+def _strip_accents_lower(s: str) -> str:
+    nfd = unicodedata.normalize("NFD", str(s or ""))
+    return "".join(ch for ch in nfd if unicodedata.category(ch) != "Mn").lower().strip()
+
+
+def abby_mcp_call(tool_name: str, arguments: dict[str, Any]) -> Any:
+    key = _read_abby_api_key()
+    payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool_name, "arguments": arguments}}
+    req = urllib.request.Request(ABBY_MCP_URL, data=json.dumps(payload).encode("utf-8"), method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Accept", "application/json, text/event-stream")
+    req.add_header("Authorization", f"Bearer {key}")
+    try:
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        err_body = exc.read().decode("utf-8", errors="ignore")[:240]
+        raise HTTPException(status_code=502, detail=f"Abby HTTP {exc.code} ({tool_name}): {err_body}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Erreur réseau Abby ({tool_name}): {exc}") from exc
+
+    for ln in raw.splitlines():
+        if ln.startswith("data:"):
+            raw = ln[5:].strip()
+    try:
+        rpc = json.loads(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Réponse Abby illisible ({tool_name}): {raw[:160]}") from exc
+
+    if "error" in rpc:
+        raise HTTPException(status_code=502, detail=f"Abby {tool_name}: {rpc['error']}")
+    result = rpc.get("result") or {}
+    if result.get("isError"):
+        txt = " ".join(c.get("text", "") for c in result.get("content", []) if c.get("type") == "text")
+        raise HTTPException(status_code=502, detail=f"Abby {tool_name}: {txt[:240]}")
+
+    txt = " ".join(c.get("text", "") for c in result.get("content", []) if c.get("type") == "text").strip()
+    if not txt:
+        return result
+    try:
+        parsed = json.loads(txt)
+        if isinstance(parsed, str):
+            try:
+                return json.loads(parsed)
+            except Exception:
+                return parsed
+        return parsed
+    except Exception:
+        return txt
+
+
+def _customer_matches(cust: dict[str, Any], target_norm: str, target_email: str, target_tel: str) -> bool:
+    c_email = (cust.get("email") or "").strip().lower()
+    if target_email and c_email and c_email == target_email:
+        return True
+    for fld in ("phone", "mobile"):
+        cd = normalize_phone_digits(str(cust.get(fld) or ""))
+        if target_tel and cd and cd == target_tel:
+            return True
+    disp = _strip_accents_lower(
+        cust.get("displayName")
+        or cust.get("name")
+        or f"{cust.get('firstname', '')} {cust.get('lastname', '')}"
+    )
+    if disp and target_norm and (disp in target_norm or target_norm in disp):
+        return True
+    tokens = [t for t in re.split(r"[\s()/-]+", target_norm) if len(t) >= 3]
+    return bool(tokens and disp and sum(1 for t in tokens if t in disp) >= min(2, len(tokens)))
+
+
+def find_or_create_abby_customer(dem: sqlite3.Row) -> tuple[str, str]:
+    clean_name = re.sub(r"\([^)]*\)", "", dem["nom"] or "").strip() or (dem["nom"] or "Client harpe")
+    target_norm = _strip_accents_lower(clean_name)
+    target_email = (dem["email"] or "").strip().lower()
+    target_tel = normalize_phone_digits(dem["telephone"] or "")
+
+    search_terms: list[str] = []
+    if clean_name:
+        search_terms.append(clean_name)
+    for tok in re.split(r"[\s/-]+", clean_name):
+        if len(tok) >= 3 and tok not in search_terms:
+            search_terms.append(tok)
+    if target_email and target_email not in search_terms:
+        search_terms.append(target_email)
+
+    for term in search_terms[:4]:
+        res = abby_mcp_call("get-customers", {"search": term, "limit": 25})
+        items = res.get("customers") or res.get("docs") or res.get("items") or (res if isinstance(res, list) else [])
+        for c in items:
+            if isinstance(c, dict) and _customer_matches(c, target_norm, target_email, target_tel):
+                cid = str(c.get("id") or c.get("_id") or "")
+                cname = str(c.get("displayName") or c.get("name") or clean_name)
+                if cid:
+                    return cid, cname
+
+    # Création dans Abby si non trouvé
+    country = "FR"
+    pays_l = _strip_accents_lower(dem["pays"] or "")
+    if "belg" in pays_l:
+        country = "BE"
+    elif "suiss" in pays_l or "ch" == pays_l:
+        country = "CH"
+
+    addr = {
+        "address": (dem["adresse"] or dem["ville"] or "À préciser").strip(),
+        "city": (dem["ville"] or dem["secteur"] or "À préciser").strip(),
+        "zipCode": (dem["cp"] or "0000").strip(),
+        "country": country,
+    }
+    is_org = (dem["categorie"] or "") in ("conservatoire", "academie", "opera")
+    if is_org:
+        payload: dict[str, Any] = {
+            "name": clean_name,
+            "billingAddress": addr,
+            "notes": f"Tournée harpe ({dem['secteur']})",
+        }
+        if target_email:
+            payload["email"] = target_email
+        if target_tel:
+            payload["phone"] = f"+{target_tel}"
+        abby_mcp_call("create-organization", payload)
+    else:
+        parts = [p for p in clean_name.replace("Mme ", "").replace("M. ", "").split() if p]
+        firstname = parts[0] if len(parts) >= 2 else "Client"
+        lastname = " ".join(parts[1:]) if len(parts) >= 2 else (parts[0] if parts else "Harpe")
+        payload = {
+            "firstname": firstname,
+            "lastname": lastname.upper(),
+            "billingAddress": addr,
+            "notes": f"Tournée harpe ({dem['secteur']})",
+        }
+        if target_email:
+            payload["email"] = target_email
+        if target_tel:
+            payload["phone"] = f"+{target_tel}"
+        abby_mcp_call("create-contact", payload)
+
+    res2 = abby_mcp_call("get-customers", {"search": clean_name.split()[0], "limit": 25})
+    items2 = res2.get("customers") or res2.get("docs") or res2.get("items") or (res2 if isinstance(res2, list) else [])
+    for c in items2:
+        if isinstance(c, dict) and _customer_matches(c, target_norm, target_email, target_tel):
+            cid = str(c.get("id") or c.get("_id") or "")
+            if cid:
+                return cid, str(c.get("displayName") or c.get("name") or clean_name)
+
+    raise HTTPException(status_code=502, detail=f"Client créé/recherché dans Abby mais customerId introuvable pour {clean_name}.")
+
+
+def _abby_download_pdf_bytes(billing_id: str) -> bytes:
+    dl = abby_mcp_call("download-billing-document", {"billingId": billing_id, "withAttachments": True})
+    if not isinstance(dl, dict) or not dl.get("downloadUrl"):
+        raise HTTPException(status_code=502, detail="Abby n'a pas renvoyé d'URL PDF.")
+    url = str(dl["downloadUrl"])
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            return resp.read()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Téléchargement PDF Abby impossible : {exc}") from exc
+
+
+def _send_gmail_with_pdf(dest: str, subject: str, body_text: str, pdf_bytes: bytes, filename: str) -> None:
+    from email.message import EmailMessage
+    import base64
+
+    prev_home = os.environ.get("HERMES_HOME")
+    os.environ["HERMES_HOME"] = ANTHONY_HERMES_HOME
+    try:
+        script_dir = str(GOOGLE_API_SCRIPT.parent)
+        if script_dir not in sys.path:
+            sys.path.insert(0, script_dir)
+        import google_api  # type: ignore
+
+        service = google_api.build_service("gmail", "v1")
+        msg = EmailMessage()
+        msg["To"] = dest
+        msg["From"] = PIANISSIMO_CALENDAR_ID
+        msg["Subject"] = subject
+        msg.set_content(body_text)
+        msg.add_attachment(pdf_bytes, maintype="application", subtype="pdf", filename=filename)
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+        service.users().messages().send(userId="me", body={"raw": raw}).execute()
+    finally:
+        if prev_home is None:
+            os.environ.pop("HERMES_HOME", None)
+        else:
+            os.environ["HERMES_HOME"] = prev_home
+
+
+@app.post("/api/abby/devis/draft")
+def create_abby_devis_draft(body: AbbyDevisDraftBody, _auth: str = Depends(require_auth)):
+    with get_db() as conn:
+        dem = conn.execute("SELECT * FROM demandes WHERE id = ?", (body.demande_id,)).fetchone()
+        if not dem:
+            raise HTTPException(status_code=404, detail="Demande introuvable.")
+        tour = conn.execute("SELECT * FROM tournees WHERE id = ?", (dem["tournee_id"],)).fetchone()
+        bareme = {**DEFAULT_BAREME, **(json.loads(tour["bareme_json"]) if tour else {})}
+
+        lines_in = body.lines or []
+        abby_lines: list[dict[str, Any]] = []
+        if lines_in:
+            for item in lines_in:
+                qty = max(1, int(item.get("quantity", 1)))
+                eur = float(item.get("unitPrice_eur", 0))
+                des = str(item.get("designation") or "Réglage harpe").strip()
+                if des and eur > 0:
+                    line_obj: dict[str, Any] = {
+                        "designation": des,
+                        "unitPrice": round(eur * 100),
+                        "quantity": qty,
+                        "quantityUnit": "unit",
+                        "type": "commercial_or_craft_services",
+                        "vatCode": "fr_not_applicable",
+                    }
+                    if item.get("description"):
+                        line_obj["description"] = str(item["description"])
+                    abby_lines.append(line_obj)
+        else:
+            if int(dem["nb_concert"] or 0) > 0:
+                abby_lines.append({
+                    "designation": "Entretien et réglage complet harpe de concert",
+                    "unitPrice": round(float(bareme["concert_eur"]) * 100),
+                    "quantity": int(dem["nb_concert"]),
+                    "quantityUnit": "unit",
+                    "type": "commercial_or_craft_services",
+                    "vatCode": "fr_not_applicable",
+                })
+            if int(dem["nb_etude"] or 0) > 0:
+                abby_lines.append({
+                    "designation": "Entretien et réglage complet harpe d'étude",
+                    "unitPrice": round(float(bareme["etude_eur"]) * 100),
+                    "quantity": int(dem["nb_etude"]),
+                    "quantityUnit": "unit",
+                    "type": "commercial_or_craft_services",
+                    "vatCode": "fr_not_applicable",
+                })
+            if int(dem["nb_reprise"] or 0) > 0:
+                abby_lines.append({
+                    "designation": "Reprise de réglage harpe à pédales",
+                    "unitPrice": round(float(bareme["reprise_eur"]) * 100),
+                    "quantity": int(dem["nb_reprise"]),
+                    "quantityUnit": "unit",
+                    "type": "commercial_or_craft_services",
+                    "vatCode": "fr_not_applicable",
+                })
+            if int(dem["nb_celtique"] or 0) > 0:
+                abby_lines.append({
+                    "designation": "Entretien et réglage harpe celtique",
+                    "unitPrice": round(float(bareme["celtique_eur"]) * 100),
+                    "quantity": int(dem["nb_celtique"]),
+                    "quantityUnit": "unit",
+                    "type": "commercial_or_craft_services",
+                    "vatCode": "fr_not_applicable",
+                })
+            if not abby_lines:
+                fallback_eur = float(dem["montant_estime_eur"] or bareme["concert_eur"])
+                abby_lines.append({
+                    "designation": f"Entretien et réglage de harpe ({dem['instruments_detail'] or 'à préciser'})",
+                    "unitPrice": round(fallback_eur * 100),
+                    "quantity": 1,
+                    "quantityUnit": "unit",
+                    "type": "commercial_or_craft_services",
+                    "vatCode": "fr_not_applicable",
+                })
+
+        if not abby_lines:
+            raise HTTPException(status_code=400, detail="Aucune ligne de devis valide (> 0 €).")
+
+        customer_id, customer_name = find_or_create_abby_customer(dem)
+        create_payload: dict[str, Any] = {
+            "customerId": customer_id,
+            "estimateType": "estimate",
+            "lines": abby_lines,
+        }
+        if body.title:
+            create_payload["title"] = body.title.strip()
+        created = abby_mcp_call("create-estimate", create_payload)
+        billing_id = ""
+        ref = "Brouillon Abby"
+        if isinstance(created, dict):
+            doc = created.get("billing") or created.get("estimate") or created
+            if isinstance(doc, dict):
+                billing_id = str(doc.get("id") or doc.get("_id") or created.get("id") or "")
+                ref = str(doc.get("number") or "Brouillon Abby")
+        if not billing_id:
+            raise HTTPException(status_code=502, detail=f"ID devis Abby non retourné : {created}")
+
+        conn.execute(
+            """UPDATE demandes
+               SET devis_abby_id = ?, devis_abby_statut = 'brouillon', devis_ref = ?,
+                   devis_statut = CASE WHEN devis_statut = 'non_requis' THEN 'a_faire' ELSE devis_statut END,
+                   updated_at = ?
+               WHERE id = ?""",
+            (billing_id, ref, now_iso(), dem["id"]),
+        )
+    broadcast_event("demandes")
+    return {
+        "ok": True,
+        "billing_id": billing_id,
+        "ref": ref,
+        "customer_name": customer_name,
+        "pdf_url": f"/api/abby/devis/{billing_id}/pdf",
+    }
+
+
+@app.get("/api/abby/devis/{billing_id}/pdf")
+def preview_abby_devis_pdf(billing_id: str, _auth: str = Depends(require_auth)):
+    pdf_bytes = _abby_download_pdf_bytes(billing_id)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="devis-pianissimo-{billing_id}.pdf"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.post("/api/abby/devis/{billing_id}/finalize")
+def finalize_abby_devis(billing_id: str, body: AbbyDevisActionBody, _auth: str = Depends(require_auth)):
+    with get_db() as conn:
+        dem = conn.execute("SELECT * FROM demandes WHERE id = ?", (body.demande_id,)).fetchone()
+        if not dem:
+            raise HTTPException(status_code=404, detail="Demande introuvable.")
+
+        fin = abby_mcp_call("finalize-billing", {"billingId": billing_id, "confirm": True})
+        info = abby_mcp_call("get-billing-by-id", {"billingId": billing_id})
+        ref = ""
+        for obj in (info, fin):
+            if isinstance(obj, dict):
+                b = obj.get("billing") or obj
+                if isinstance(b, dict) and b.get("number"):
+                    ref = str(b["number"])
+                    break
+        if not ref:
+            ref = dem["devis_ref"] or "Finalisé Abby"
+
+        conn.execute(
+            """UPDATE demandes
+               SET devis_abby_id = ?, devis_abby_statut = 'finalise', devis_ref = ?, updated_at = ?
+               WHERE id = ?""",
+            (billing_id, ref, now_iso(), dem["id"]),
+        )
+    broadcast_event("demandes")
+    return {"ok": True, "billing_id": billing_id, "ref": ref}
+
+
+@app.post("/api/abby/devis/{billing_id}/send")
+def send_abby_devis(billing_id: str, body: AbbyDevisSendBody, _auth: str = Depends(require_auth)):
+    texte = (body.texte or "").strip()
+    bad_phones = find_unauthorized_phones(texte)
+    if bad_phones:
+        raise HTTPException(status_code=400, detail=f"Numéro non autorisé dans le texte : {', '.join(bad_phones)}")
+
+    with get_db() as conn:
+        dem = conn.execute("SELECT * FROM demandes WHERE id = ?", (body.demande_id,)).fetchone()
+        if not dem:
+            raise HTTPException(status_code=404, detail="Demande introuvable.")
+        ref = dem["devis_ref"] or billing_id
+
+        if body.canal == "WhatsApp":
+            tel = normalize_phone_digits(dem["telephone"] or "")
+            if not tel:
+                raise HTTPException(status_code=400, detail="Numéro WhatsApp client invalide ou absent.")
+            pdf_bytes = _abby_download_pdf_bytes(billing_id)
+            safe_ref = re.sub(r"[^A-Za-z0-9._-]+", "-", ref) or billing_id
+            with tempfile.NamedTemporaryFile(prefix="devis-", suffix=".pdf", delete=False) as tf:
+                tf.write(pdf_bytes)
+                tmp_path = tf.name
+            try:
+                cmd = [
+                    WACLI_BIN, "send", "file",
+                    "--to", tel,
+                    "--file", tmp_path,
+                    "--filename", f"Devis-Pianissimo-{safe_ref}.pdf",
+                    "--json",
+                ]
+                if texte:
+                    cmd.extend(["--caption", texte])
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
+                ok = False
+                try:
+                    ok = bool(json.loads(proc.stdout.strip().splitlines()[-1]).get("success"))
+                except Exception:
+                    ok = proc.returncode == 0
+                if not ok:
+                    err_msg = (proc.stderr or proc.stdout or "Échec wacli")[-200:]
+                    raise HTTPException(status_code=502, detail=f"Envoi devis WhatsApp échoué : {err_msg}")
+            finally:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+        elif body.canal == "Email":
+            dest = (dem["email"] or "").strip()
+            if not dest:
+                raise HTTPException(status_code=400, detail="Adresse email client absente.")
+            subject = (body.objet or f"Devis Pianissimo {ref} — {dem['nom']}").strip()
+            msg_text = texte or f"Bonjour,\n\nVeuillez trouver ci-joint notre devis {ref}.\n\nBien cordialement,\nMarie — PIANISSIMO\nContact Anthony : 06 28 23 07 61"
+            pdf_bytes = _abby_download_pdf_bytes(billing_id)
+            safe_ref = re.sub(r"[^A-Za-z0-9._-]+", "-", ref) or billing_id
+            _send_gmail_with_pdf(dest, subject, msg_text, pdf_bytes, f"Devis-Pianissimo-{safe_ref}.pdf")
+        else:
+            raise HTTPException(status_code=400, detail="Canal d'envoi invalide (Email ou WhatsApp).")
+
+        now = now_iso()
+        conn.execute(
+            """UPDATE demandes
+               SET devis_abby_statut = 'envoye', devis_statut = 'envoye', updated_at = ?
+               WHERE id = ?""",
+            (now, dem["id"]),
+        )
+        conn.execute(
+            """INSERT INTO messages_historique (id, demande_id, tournee_id, canal, direction, horodatage, contenu, auteur, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'sortant', ?, ?, 'Pianissimo (Devis Abby)', ?, ?)""",
+            (str(uuid.uuid4()), dem["id"], dem["tournee_id"], body.canal, now, f"[Devis PDF {ref} envoyé]\n{texte}".strip(), now, now),
+        )
+    broadcast_event("demandes")
+    broadcast_event("messages_historique")
+    return {"ok": True, "ref": ref}
+
+
+# ---------------------------------------------------------------------------
+# Export planning -> Google Agenda Pianissimo
+# ---------------------------------------------------------------------------
+
+def _hhmm_to_paris_iso(day_iso: str, total_minutes: int) -> str:
+    h = (total_minutes // 60) % 24
+    m = total_minutes % 60
+    dt = datetime.fromisoformat(f"{day_iso}T{h:02d}:{m:02d}:00")
+    return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+@app.post("/api/tournees/{tournee_id}/sync-calendar")
+def sync_tournee_calendar(tournee_id: str, body: CalendarSyncBody, _auth: str = Depends(require_auth)):
+    with get_db() as conn:
+        tour = conn.execute("SELECT * FROM tournees WHERE id = ?", (tournee_id,)).fetchone()
+        if not tour:
+            raise HTTPException(status_code=404, detail="Tournée introuvable.")
+        dem_rows = conn.execute(
+            """SELECT * FROM demandes
+               WHERE tournee_id = ? AND jour_date IS NOT NULL AND jour_date != ''
+                 AND statut NOT IN ('annule', 'doublon')
+               ORDER BY jour_date ASC, ordre_jour ASC, heure_debut ASC""",
+            (tournee_id,),
+        ).fetchall()
+
+    slot_map = {str(s.get("demande_id")): s for s in (body.slots or []) if s.get("demande_id")}
+    planned_items: list[dict[str, Any]] = []
+    for d in dem_rows:
+        did = d["id"]
+        custom = slot_map.get(did)
+        if custom and custom.get("start_dt") and custom.get("end_dt"):
+            start_dt = str(custom["start_dt"])
+            end_dt = str(custom["end_dt"])
+        else:
+            hhmm = (d["heure_debut"] or "09:00")[:5]
+            try:
+                hh, mm = map(int, hhmm.split(":"))
+            except Exception:
+                hh, mm = 9, 0
+            start_m = hh * 60 + mm
+            dur_m = max(30, round(float(d["duree_estimee_h"] or 1.0) * 60))
+            start_dt = _hhmm_to_paris_iso(d["jour_date"], start_m)
+            end_dt = _hhmm_to_paris_iso(d["jour_date"], start_m + dur_m)
+
+        desc_parts = [
+            f"Tournée : {tour['nom']}",
+            f"Statut : {d['statut']}",
+            f"Instruments : {d['instruments_detail'] or 'à préciser'}",
+            f"Téléphone : {d['telephone']}" if d["telephone"] else "",
+            f"Email : {d['email']}" if d["email"] else "",
+            f"Contraintes : {d['contraintes']}" if d["contraintes"] else "",
+            f"Devis : {d['devis_ref']} ({d['devis_statut']})" if d["devis_ref"] else "",
+        ]
+        location = ", ".join(p for p in (d["adresse"], d["cp"], d["ville"], d["pays"]) if p)
+        planned_items.append({
+            "demande_id": did,
+            "summary": f"Harpe — {d['nom']} ({d['ville'] or d['secteur']})",
+            "location": location,
+            "description": "\n".join(p for p in desc_parts if p),
+            "start": {"dateTime": start_dt, "timeZone": "Europe/Paris"},
+            "end": {"dateTime": end_dt, "timeZone": "Europe/Paris"},
+            "extendedProperties": {
+                "private": {
+                    "pianissimo_tournee_id": tournee_id,
+                    "pianissimo_demande_id": did,
+                }
+            },
+        })
+
+    prev_home = os.environ.get("HERMES_HOME")
+    os.environ["HERMES_HOME"] = ANTHONY_HERMES_HOME
+    try:
+        script_dir = str(GOOGLE_API_SCRIPT.parent)
+        if script_dir not in sys.path:
+            sys.path.insert(0, script_dir)
+        import google_api  # type: ignore
+
+        service = google_api.build_service("calendar", "v3")
+        existing_res = service.events().list(
+            calendarId=PIANISSIMO_CALENDAR_ID,
+            privateExtendedProperty=f"pianissimo_tournee_id={tournee_id}",
+            singleEvents=False,
+            maxResults=250,
+        ).execute()
+        existing_by_dem: dict[str, str] = {}
+        for ev in existing_res.get("items", []):
+            priv = (ev.get("extendedProperties") or {}).get("private") or {}
+            if priv.get("pianissimo_demande_id"):
+                existing_by_dem[str(priv["pianissimo_demande_id"])] = str(ev["id"])
+
+        create_count = sum(1 for it in planned_items if it["demande_id"] not in existing_by_dem)
+        update_count = sum(1 for it in planned_items if it["demande_id"] in existing_by_dem)
+
+        if body.dry_run:
+            return {
+                "ok": True,
+                "dry_run": True,
+                "calendar_id": PIANISSIMO_CALENDAR_ID,
+                "total": len(planned_items),
+                "create_count": create_count,
+                "update_count": update_count,
+                "preview": [{"summary": it["summary"], "start": it["start"]["dateTime"]} for it in planned_items],
+            }
+
+        created = 0
+        updated = 0
+        for it in planned_items:
+            ev_body = {k: v for k, v in it.items() if k != "demande_id"}
+            eid = existing_by_dem.get(it["demande_id"])
+            if eid:
+                service.events().patch(calendarId=PIANISSIMO_CALENDAR_ID, eventId=eid, body=ev_body).execute()
+                updated += 1
+            else:
+                service.events().insert(calendarId=PIANISSIMO_CALENDAR_ID, body=ev_body).execute()
+                created += 1
+
+        return {
+            "ok": True,
+            "dry_run": False,
+            "calendar_id": PIANISSIMO_CALENDAR_ID,
+            "created": created,
+            "updated": updated,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Erreur Google Agenda : {exc}") from exc
+    finally:
+        if prev_home is None:
+            os.environ.pop("HERMES_HOME", None)
+        else:
+            os.environ["HERMES_HOME"] = prev_home
 
 
 @app.get("/api/events")

@@ -1,5 +1,7 @@
-// Module Pilotage financier, rentabilité prévisionnelle et suivi des devis
+// Module Pilotage financier, rentabilité prévisionnelle et suivi des devis Abby
 (() => {
+  let showAllClientsDevis = false;
+
   function escapeHtml(s) {
     return String(s || "")
       .replace(/&/g, "&amp;")
@@ -8,11 +10,26 @@
       .replace(/"/g, "&quot;");
   }
 
-  function render({ tournee, demandes, onSaveFrais, onChangeDevis, onOpenDemande }) {
+  function render({
+    tournee,
+    demandes,
+    onSaveFrais,
+    onChangeDevis,
+    onOpenDemande,
+    onOpenAbbyDraft,
+    onFinalizeAbby,
+    onOpenAbbySend,
+  }) {
     const container = document.getElementById("finance-summary-grid");
     if (!container || !tournee) return;
 
-    const bareme = tournee.bareme || { concert_eur: 320, etude_eur: 280, celtique_eur: 150 };
+    const bareme = {
+      concert_eur: 320,
+      etude_eur: 280,
+      reprise_eur: 160,
+      celtique_eur: 150,
+      ...(tournee.bareme || {}),
+    };
     const frais = tournee.frais_estimes || {
       location_voiture: 300,
       carburant_peages: 180,
@@ -27,12 +44,14 @@
     let caEnCours = 0;
     let totalConcert = 0;
     let totalEtude = 0;
+    let totalReprise = 0;
     let totalCeltique = 0;
     let totalInconnu = 0;
 
     for (const d of actives) {
       totalConcert += Number(d.nb_concert || 0);
       totalEtude += Number(d.nb_etude || 0);
+      totalReprise += Number(d.nb_reprise || 0);
       totalCeltique += Number(d.nb_celtique || 0);
       totalInconnu += Number(d.nb_inconnu || 0);
 
@@ -41,6 +60,7 @@
           ? Number(d.montant_estime_eur)
           : Number(d.nb_concert || 0) * bareme.concert_eur +
             Number(d.nb_etude || 0) * bareme.etude_eur +
+            Number(d.nb_reprise || 0) * bareme.reprise_eur +
             Number(d.nb_celtique || 0) * bareme.celtique_eur;
 
       if (d.statut === "confirme") caConfirme += est;
@@ -58,14 +78,41 @@
     const netBas = caTotalBas - totalFrais;
     const netHaut = caTotalHaut - totalFrais;
 
-    const devisItems = actives.filter((d) => d.devis_statut !== "non_requis" || d.categorie === "conservatoire" || d.categorie === "opera" || d.categorie === "academie");
+    const devisItems = showAllClientsDevis
+      ? actives
+      : actives.filter(
+          (d) =>
+            d.devis_statut !== "non_requis" ||
+            Boolean(d.devis_abby_id) ||
+            d.categorie === "conservatoire" ||
+            d.categorie === "opera" ||
+            d.categorie === "academie",
+        );
 
     const devisRows = devisItems
-      .map(
-        (d) => `
+      .map((d) => {
+        let abbyActions = `<button type="button" class="btn btn-primary btn-xs js-abby-draft" data-id="${d.id}">Brouillon Abby</button>`;
+        if (d.devis_abby_id && d.devis_abby_statut === "brouillon") {
+          abbyActions = `
+            <a class="btn btn-ghost btn-xs" href="/api/abby/devis/${encodeURIComponent(d.devis_abby_id)}/pdf" target="_blank" rel="noopener">PDF brouillon ↗</a>
+            <button type="button" class="btn btn-primary btn-xs js-abby-finalize" data-id="${d.id}" data-bid="${d.devis_abby_id}">Finaliser</button>
+          `;
+        } else if (d.devis_abby_id && d.devis_abby_statut === "finalise") {
+          abbyActions = `
+            <a class="btn btn-ghost btn-xs" href="/api/abby/devis/${encodeURIComponent(d.devis_abby_id)}/pdf" target="_blank" rel="noopener">PDF final ↗</a>
+            <button type="button" class="btn btn-whatsapp btn-xs js-abby-send" data-id="${d.id}" data-bid="${d.devis_abby_id}">Envoyer</button>
+          `;
+        } else if (d.devis_abby_id && d.devis_abby_statut === "envoye") {
+          abbyActions = `
+            <span class="badge badge-ok">Envoyé</span>
+            <a class="btn btn-ghost btn-xs" href="/api/abby/devis/${encodeURIComponent(d.devis_abby_id)}/pdf" target="_blank" rel="noopener">PDF ↗</a>
+          `;
+        }
+
+        return `
       <tr>
         <th scope="row">${escapeHtml(d.nom)}</th>
-        <td>${escapeHtml(d.montant_note || (d.montant_estime_eur ? `${d.montant_estime_eur} €` : "À chiffrer"))}</td>
+        <td>${escapeHtml(d.montant_note || (d.montant_estime_eur != null ? `${d.montant_estime_eur} €` : "À chiffrer"))}</td>
         <td>
           <select class="select-sm js-devis-statut" data-id="${d.id}" aria-label="Statut devis pour ${escapeHtml(d.nom)}">
             <option value="non_requis" ${d.devis_statut === "non_requis" ? "selected" : ""}>Non requis</option>
@@ -76,10 +123,15 @@
           </select>
         </td>
         <td>${escapeHtml(d.devis_ref || "—")}</td>
-        <td><button type="button" class="btn btn-ghost btn-xs js-fin-fiche" data-id="${d.id}">Fiche</button></td>
+        <td>
+          <div class="row-actions">
+            ${abbyActions}
+            <button type="button" class="btn btn-ghost btn-xs js-fin-fiche" data-id="${d.id}">Fiche</button>
+          </div>
+        </td>
       </tr>
-    `,
-      )
+    `;
+      })
       .join("");
 
     container.innerHTML = `
@@ -96,7 +148,7 @@
             <div class="kpi-value">${Math.round(caEnCours).toLocaleString("fr-FR")} €</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-label">Fourchette globale brute</div>
+            <div class="kpi-label">CA brut estimé (min – max)</div>
             <div class="kpi-value">${Math.round(caTotalBas).toLocaleString("fr-FR")} – ${Math.round(caTotalHaut).toLocaleString("fr-FR")} €</div>
             <div class="kpi-detail">${totalInconnu} harpe(s) à modèle inconnu</div>
           </div>
@@ -121,9 +173,17 @@
       </section>
 
       <section class="card">
-        <h2>Parc d'instruments &amp; Devis institutions</h2>
-        <p class="card-sub">Répartition active : ${totalConcert} Concert · ${totalEtude} Étude · ${totalCeltique} Celtique · ${totalInconnu} À préciser</p>
-        <div tabindex="0" role="region" aria-label="Suivi des devis et marchés publics" class="table-wrapper" style="margin-top:12px;">
+        <div class="card-head">
+          <div>
+            <h2>Parc d'instruments &amp; Devis Abby (via Trois)</h2>
+            <p class="card-sub">Répartition active : ${totalConcert} Concert · ${totalEtude} Étude · ${totalReprise} Reprise · ${totalCeltique} Celtique · ${totalInconnu} À préciser</p>
+          </div>
+          <label style="display:inline-flex;align-items:center;gap:6px;font-size:0.82rem;font-weight:600;cursor:pointer;">
+            <input type="checkbox" id="fin-show-all-devis" ${showAllClientsDevis ? "checked" : ""} />
+            <span>Tous les clients</span>
+          </label>
+        </div>
+        <div tabindex="0" role="region" aria-label="Suivi des devis Abby et marchés publics" class="table-wrapper" style="margin-top:8px;">
           <table class="data-table">
             <thead>
               <tr>
@@ -131,16 +191,30 @@
                 <th scope="col">Montant / Note</th>
                 <th scope="col">Statut devis</th>
                 <th scope="col">Référence</th>
-                <th scope="col">Action</th>
+                <th scope="col">Abby PDF &amp; actions</th>
               </tr>
             </thead>
             <tbody>
-              ${devisRows || `<tr><td colspan="5">Aucune institution ou demande de devis sur cette tournée.</td></tr>`}
+              ${devisRows || `<tr><td colspan="5">Aucune institution ou demande de devis filtrée (cochez « Tous les clients » si besoin).</td></tr>`}
             </tbody>
           </table>
         </div>
       </section>
     `;
+
+    document.getElementById("fin-show-all-devis")?.addEventListener("change", (e) => {
+      showAllClientsDevis = Boolean(e.target.checked);
+      render({
+        tournee,
+        demandes,
+        onSaveFrais,
+        onChangeDevis,
+        onOpenDemande,
+        onOpenAbbyDraft,
+        onFinalizeAbby,
+        onOpenAbbySend,
+      });
+    });
 
     document.getElementById("form-frais-tournee")?.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -160,7 +234,21 @@
     container.querySelectorAll(".js-fin-fiche").forEach((btn) => {
       btn.addEventListener("click", () => onOpenDemande(btn.dataset.id));
     });
+
+    container.querySelectorAll(".js-abby-draft").forEach((btn) => {
+      btn.addEventListener("click", () => onOpenAbbyDraft && onOpenAbbyDraft(btn.dataset.id));
+    });
+
+    container.querySelectorAll(".js-abby-finalize").forEach((btn) => {
+      btn.addEventListener("click", () => onFinalizeAbby && onFinalizeAbby(btn.dataset.id, btn.dataset.bid));
+    });
+
+    container.querySelectorAll(".js-abby-send").forEach((btn) => {
+      btn.addEventListener("click", () => onOpenAbbySend && onOpenAbbySend(btn.dataset.id, btn.dataset.bid));
+    });
   }
 
-  window.PianissimoFinance = { render };
+  window.PianissimoFinance = {
+    render,
+  };
 })();

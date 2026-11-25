@@ -191,7 +191,7 @@
       : "Non calé";
 
     document.getElementById("msg-client-context").innerHTML = `
-      <div><strong>Instruments :</strong> ${escapeHtml(demande.instruments_detail || "À préciser")} (${Number(demande.duree_estimee_h || 0)}h · ${escapeHtml(demande.montant_note || "tarif standard")})</div>
+      <div><strong>Instruments :</strong> ${escapeHtml(demande.instruments_detail || "À préciser")} (${window.formatDurationH(demande.duree_estimee_h)} · ${escapeHtml(demande.montant_note || "tarif standard")})</div>
       <div><strong>Adresse :</strong> ${escapeHtml(demande.adresse || "À confirmer")} ${demande.adresse_verifiee ? "✓" : "⚠ non vérifiée"}</div>
       <div><strong>Créneau prévu :</strong> ${escapeHtml(creneau)}</div>
       ${demande.action_requise ? `<div><strong>Action requise :</strong> ${escapeHtml(demande.action_requise)}</div>` : ""}

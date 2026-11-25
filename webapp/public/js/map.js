@@ -13,6 +13,7 @@
   const COLORS = {
     concert: "#B87D14",
     etude: "#2B5B84",
+    reprise: "#0D9488",
     celtique: "#2B7A50",
     inconnu: "#6B655D",
   };
@@ -36,9 +37,10 @@
         const totalHarps = markers.reduce((acc, m) => acc + (m.options.harpCount || 1), 0);
         const c = markers.reduce((acc, m) => acc + (m.options.counts?.concert || 0), 0);
         const e = markers.reduce((acc, m) => acc + (m.options.counts?.etude || 0), 0);
+        const r = markers.reduce((acc, m) => acc + (m.options.counts?.reprise || 0), 0);
         const cel = markers.reduce((acc, m) => acc + (m.options.counts?.celtique || 0), 0);
         const inc = markers.reduce((acc, m) => acc + (m.options.counts?.inconnu || 0), 0);
-        const svg = buildRingSvg(totalHarps, { concert: c, etude: e, celtique: cel, inconnu: inc }, 42);
+        const svg = buildRingSvg(totalHarps, { concert: c, etude: e, reprise: r, celtique: cel, inconnu: inc }, 42);
         return L.divIcon({
           html: `<div class="pole-bubble">${svg}</div>`,
           className: "pole-pin",
@@ -53,12 +55,14 @@
   function harpCounts(d) {
     const concert = Number(d.nb_concert || 0);
     const etude = Number(d.nb_etude || 0);
+    const reprise = Number(d.nb_reprise || 0);
     const celtique = Number(d.nb_celtique || 0);
     const inconnu = Number(d.nb_inconnu || 0);
-    const total = concert + etude + celtique + inconnu;
+    const total = concert + etude + reprise + celtique + inconnu;
     return {
       concert,
       etude,
+      reprise,
       celtique,
       inconnu,
       total: total > 0 ? total : 1,
@@ -70,14 +74,14 @@
     const cx = size / 2;
     const r = size / 2 - 4;
     const circ = 2 * Math.PI * r;
-    const sum = counts.concert + counts.etude + counts.celtique + counts.inconnu;
+    const sum = counts.concert + counts.etude + (counts.reprise || 0) + counts.celtique + counts.inconnu;
     const segments = [];
 
     if (sum <= 0) {
       segments.push({ color: COLORS.inconnu, len: circ });
     } else {
-      for (const key of ["concert", "etude", "celtique", "inconnu"]) {
-        if (counts[key] > 0) {
+      for (const key of ["concert", "etude", "reprise", "celtique", "inconnu"]) {
+        if ((counts[key] || 0) > 0) {
           segments.push({ color: COLORS[key], len: (counts[key] / sum) * circ });
         }
       }
@@ -105,6 +109,7 @@
     const entries = [
       ["concert", counts.concert],
       ["etude", counts.etude],
+      ["reprise", counts.reprise || 0],
       ["celtique", counts.celtique],
       ["inconnu", counts.inconnu],
     ].sort((a, b) => b[1] - a[1]);
@@ -134,6 +139,7 @@
           lonSum: 0,
           concert: 0,
           etude: 0,
+          reprise: 0,
           celtique: 0,
           inconnu: 0,
           conflicts: 0,
@@ -145,6 +151,7 @@
       g.lonSum += Number(d.longitude);
       g.concert += Number(d.nb_concert || 0);
       g.etude += Number(d.nb_etude || 0);
+      g.reprise += Number(d.nb_reprise || 0);
       g.celtique += Number(d.nb_celtique || 0);
       g.inconnu += Number(d.nb_inconnu || 0);
       if (d.statut === "conflit") g.conflicts += 1;
@@ -153,7 +160,7 @@
     for (const g of groups.values()) {
       const lat = g.latSum / g.items.length;
       const lon = g.lonSum / g.items.length;
-      const totalHarps = g.concert + g.etude + g.celtique + g.inconnu;
+      const totalHarps = g.concert + g.etude + g.reprise + g.celtique + g.inconnu;
       const ring = buildRingSvg(totalHarps, g, 50);
       const conflictTag = g.conflicts ? ` · ⚠ ${g.conflicts}` : "";
       const icon = L.divIcon({
@@ -173,7 +180,7 @@
         }
       });
       marker.bindTooltip(
-        `<strong>${escapeHtml(g.name)}</strong><br/>${totalHarps} harpe(s) · ${g.items.length} fiche(s)<br/>Concert: ${g.concert} · Étude: ${g.etude} · Celtique: ${g.celtique}`,
+        `<strong>${escapeHtml(g.name)}</strong><br/>${totalHarps} harpe(s) · ${g.items.length} fiche(s)<br/>Concert: ${g.concert} · Étude: ${g.etude} · Reprise: ${g.reprise} · Celtique: ${g.celtique}`,
         { direction: "top", offset: [0, -24] },
       );
       marker.addTo(polesLayer);
@@ -205,7 +212,7 @@
         <strong>${escapeHtml(d.nom)}</strong><br/>
         <span style="color:#6B6257;font-size:12px;">${escapeHtml(d.secteur)} · ${escapeHtml(d.ville)}</span><br/>
         <div style="margin:4px 0;font-size:12px;">${escapeHtml(d.instruments_detail || "Modèle à préciser")}</div>
-        <div style="font-size:12px;">Statut : <strong>${escapeHtml(d.statut)}</strong> · ${Number(d.duree_estimee_h || 0)}h</div>
+        <div style="font-size:12px;">Statut : <strong>${escapeHtml(d.statut)}</strong> · ${window.formatDurationH(d.duree_estimee_h)}</div>
         <div style="display:flex;gap:6px;margin-top:8px;">
           <button type="button" class="btn btn-ghost btn-xs js-pop-fiche">Fiche</button>
           <button type="button" class="btn btn-primary btn-xs js-pop-msg">Message</button>

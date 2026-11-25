@@ -30,11 +30,16 @@
     return `${String(h).padStart(2, "0")}h${String(m).padStart(2, "0")}`;
   }
 
+  let lastComputedSlots = [];
+
   function formatDuration(hours) {
-    const mins = Math.round(hours * 60);
-    const h = Math.floor(mins / 60);
-    const m = mins % 60;
-    return m ? `${h}h${String(m).padStart(2, "0")}` : `${h}h`;
+    return window.formatDurationH(hours);
+  }
+
+  function formatIsoLocal(dayIso, totalMin) {
+    const h = Math.floor(totalMin / 60) % 24;
+    const m = Math.round(totalMin % 60);
+    return `${dayIso}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:00`;
   }
 
   function escapeHtml(s) {
@@ -76,6 +81,7 @@
     }
 
     container.innerHTML = `<div class="empty-state">Calcul des trajets routiers OSRM...</div>`;
+    lastComputedSlots = [];
 
     const renderedCards = [];
     for (const dayIso of days) {
@@ -89,7 +95,7 @@
         nbLuthiers >= 2
           ? stops.reduce((acc, s) => {
               const h = Number(s.duree_estimee_h || 0);
-              const harps = Number(s.nb_concert || 0) + Number(s.nb_etude || 0) + Number(s.nb_celtique || 0) + Number(s.nb_inconnu || 0);
+              const harps = Number(s.nb_concert || 0) + Number(s.nb_etude || 0) + Number(s.nb_reprise || 0) + Number(s.nb_celtique || 0) + Number(s.nb_inconnu || 0);
               return acc + (harps >= 2 || h >= 4.5 ? h / 2 : h);
             }, 0)
           : workshopTotalH;
@@ -97,7 +103,7 @@
       const travelTotalMin = legs.reduce((acc, l) => acc + (l.minutes || 0), 0);
       const amplitudeH = workshopEffH + travelTotalMin / 60;
       const totalHarps = stops.reduce(
-        (acc, s) => acc + Number(s.nb_concert || 0) + Number(s.nb_etude || 0) + Number(s.nb_celtique || 0) + Number(s.nb_inconnu || 0),
+        (acc, s) => acc + Number(s.nb_concert || 0) + Number(s.nb_etude || 0) + Number(s.nb_reprise || 0) + Number(s.nb_celtique || 0) + Number(s.nb_inconnu || 0),
         0,
       );
 
@@ -119,9 +125,14 @@
         }
 
         const durH = Number(s.duree_estimee_h || 0);
-        const harps = Number(s.nb_concert || 0) + Number(s.nb_etude || 0) + Number(s.nb_celtique || 0) + Number(s.nb_inconnu || 0);
+        const harps = Number(s.nb_concert || 0) + Number(s.nb_etude || 0) + Number(s.nb_reprise || 0) + Number(s.nb_celtique || 0) + Number(s.nb_inconnu || 0);
         const effH = nbLuthiers >= 2 && (harps >= 2 || durH >= 4.5) ? durH / 2 : durH;
-        const endMin = cursorMin + Math.round(effH * 60);
+        const endMin = cursorMin + Math.max(30, Math.round(effH * 60));
+        lastComputedSlots.push({
+          demande_id: s.id,
+          start_dt: formatIsoLocal(dayIso, cursorMin),
+          end_dt: formatIsoLocal(dayIso, endMin),
+        });
         const slotLabel = `${formatMinutes(cursorMin)} → ${formatMinutes(endMin)}`;
         cursorMin = endMin;
 
@@ -283,6 +294,7 @@
 
   window.PianissimoPlanning = {
     listTourDays,
+    getScheduledSlots: () => lastComputedSlots.slice(),
     render,
   };
 })();
